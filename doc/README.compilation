@@ -1,0 +1,210 @@
+Before you Compile ntopng
+-------------------------
+
+If you want to use binary packages instead of compiling ntopng from source you can
+download them for various platforms at http://packages.ntop.org/
+
+Prerequisites for Compilation
+-----------------------------
+
+Prerequisites
+- glib2
+- GNU autotools/libtool
+- libmaxminddb
+- libpcap-dev and PF_RING (optional but recommended)
+- redis (redis server) 2.2 or newer
+- wget (for 'make geoip')
+- libxml2-dev
+- libglib2.0-dev
+- libsqlite3-dev
+- libcurl-dev
+- uglify-es
+- npm (optional - JS/CSS compilation)
+- curl jq (optional)
+
+
+On Ubuntu/Debian
+~~~~~~~~~~~~~~~~
+
+apt install build-essential git bison flex libxml2-dev libpcap-dev libtool libtool-bin rrdtool librrd-dev autoconf pkg-config automake autogen redis-server wget libsqlite3-dev libhiredis-dev libmaxminddb-dev libcurl4-openssl-dev libpango1.0-dev libcairo2-dev libnetfilter-queue-dev zlib1g-dev libssl-dev libcap-dev libnetfilter-conntrack-dev libreadline-dev libjson-c-dev libldap2-dev rename libsnmp-dev libexpat1-dev libmaxminddb-dev libradcli-dev libjson-c-dev libzmq3-dev curl jq libnl-genl-3-dev libgcrypt20-dev cmake libzstd-dev libnats-dev libmysqlclient-dev
+
+If you plan to manipulate javascript you also need to do
+- apt install npm python3-setuptools build-essential
+- npm install -g uglify-es
+- npm install -g clean-css-cli
+
+If you plan to build packages you should also install:
+- apt install debhelper dkms debsigs
+
+On Ubuntu/Debian (up to Debian 11) do
+- apt install dpkg-sig
+
+If you want to optimize memory usage please consider installing jemalloc
+- git clone https://github.com/jemalloc/jemalloc.git 
+
+If you plan to build ntopng dependencies you should also install:
+- apt install libzstd-dev librdkafka-dev libbpfcc-dev libjson-c-dev
+
+If you plan to check memory and run the sanitizer you should also install:
+- apt install clang
+
+On Ubuntu 16/18
+~~~~~~~~~~~~~~~
+
+You also need to do "apt install libtool-bin"
+
+On Ubuntu20
+~~~~~~~~~~~~~~
+
+You also need to do "apt install libzmq3-dev"
+
+On Debian 9/10/11/12
+~~~~~~~~~~~~~~~~~~~~
+
+You need to do add the `contrib` component to /etc/apt/sources.list entries, then
+
+apt install libpng-dev libzmq5-dev libgcrypt20-dev
+
+On Other Debian
+~~~~~~~~~~~~~~~
+
+apt install libzmq3-dev libgcrypt20-dev
+
+On Raspbian 10
+~~~~~~~~~~~~~~
+
+apt install libzmq3-dev
+
+On CentOS Stream (8)
+~~~~~~~~~~~~~~~~~~~~
+
+dnf install http://rpms.remirepo.net/enterprise/remi-release-8.rpm
+dnf config-manager --set-enabled powertools
+dnf config-manager --set-enabled remi
+dnf group install "Development Tools"
+dnf clean all
+dnf update
+dnf install openldap-devel libpcap-devel openssl-devel libcurl-devel libmaxminddb-devel sqlite-devel radcli-devel librdkafka-devel libcap-devel zeromq-devel rrdtool-devel json-c-devel expect hiredis-devel readline-devel expat-devel npm net-snmp-devel cmake
+npm install -g uglify-es
+
+On CentOS/Rocky 8
+~~~~~~~~~~~~~~~~~
+
+dnf group install "Development Tools"
+dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+Set "enabled=1" in file /etc/yum.repos.d/CentOS-PowerTools.repo [CentOS]
+Set "enabled=1" in file /etc/yum.repos.d/Rocky-PowerTools.repo  [Rocky]
+yum install http://rpms.remirepo.net/enterprise/remi-release-8.rpm
+yum config-manager --set-enabled remi
+yum clean all
+yum update
+yum install openldap-devel libpcap-devel openssl-devel libcurl-devel libmaxminddb-devel sqlite-devel radcli-devel librdkafka-devel libcap-devel zeromq-devel rrdtool-devel json-c-devel expect expat-devel npm net-snmp-devel cmake
+npm install -g uglify-es
+
+Then list the streams which provide Redis (dnf module list redis) and install it. For example, to install it from stream 5 run: sudo dnf module install redis:5
+
+yum install hiredis-devel
+
+
+On Rocky 9/10
+~~~~~~~~~~~~~~~~~
+dnf group install "Development Tools"
+dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+yum install http://rpms.remirepo.net/enterprise/remi-release-9.rpm
+yum config-manager --set-enabled remi
+dnf config-manager --set-enabled crb
+yum clean all
+yum install openldap-devel libpcap-devel openssl-devel libcurl-devel libmaxminddb-devel sqlite-devel radcli-devel librdkafka-devel libcap-devel zeromq-devel rrdtool-devel json-c-devel expect expat-devel npm numactl-devel net-snmp-devel cmake hiredis-devel
+yum update
+npm install -g uglify-es
+
+
+On Fedora 30/31/32
+~~~~~~~~~~~~~~~~~~
+
+dnf install libtool m4
+dnf install autoconf automake
+dnf group install "Development Tools"
+dnf install libpcap-devel openssl-devel libcurl-devel libmaxminddb-devel sqlite-devel radcli-devel librdkafka-devel libcap-devel zeromq-devel rrdtool-devel json-c-devel expect readline-devel net-snmp-devel cmake
+dnf install redis
+
+On (Older) Fedora/CentOS 6-7
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+yum groupinstall "Development tools"
+yum install git autoconf automake autogen bison flex libpcap-devel libmaxminddb-devel hiredis-devel redis glib2-devel libxml2-devel sqlite-devel gcc-c++ libtool wget libcurl-devel pango-devel cairo-devel libpng-devel libnetfilter_queue-devel zlib-devel which libcap-devel readline-devel zeromq-devel json-c-devel net-snmp-devel cmake
+
+On MacOS
+~~~~~~~~
+
+Using Brew (http://brew.sh):
+
+brew install redis hiredis autoconf automake libtool rrdtool wget pkg-config git json-c libmaxminddb zmq openssl
+
+Using MacPorts:
+
+sudo port install redis hiredis autoconf automake libtool rrdtool wget pkgconfig git openssl zlib json-c libmaxminddb zmq libgcrypt
+
+On FreeBSD
+~~~~~~~~~~
+
+All versions:
+sudo pkg install gcc git autoconf automake libtool pkgconf gmake sudo libmaxminddb libsodium rrdtool lua53 zip json-c libzmq4 sqlite3 libgcrypt librdkafka bison flex libpcap rename cmake redis hiredis bash
+
+
+On OpenSuse
+~~~~~~~~~~~
+
+zypper install flex bison libpcap-devel libmaxminddb-devel libsqlite3-0-devel sqlite3-devel czmq-devel
+
+On Windows
+~~~~~~~~~~
+
+You can download the Redis server from
+https://github.com/rgl/redis/downloads
+
+Additional Notes
+~~~~~~~~~~~~~~~~
+
+Compilation of Javascript/CSS scripts to produce httpdocs/dist require npm and the installation of 
+npm packages defined in package.json (devDependencies). npm 12 or later is required and can be installed
+by configuring the repository:
+
+curl -sL https://deb.nodesource.com/setup_12.x | sudo bash -
+sudo apt install -y nodejs npm
+npm rebuild node-sass
+
+Installation of the required npm packages:
+
+npm install --save-dev @babel/core
+jq -c '.devDependencies' package.json | jq -r -M | grep ':' | sed 's/:/@/' | sed 's|[", ^]||g' | xargs -L1 npm install --save-dev 
+
+Building JS/CSS in dist:
+
+npm run build:dev
+
+ZMQ Version
+~~~~~~~~~~~
+
+You can use ZMQ 4.x as alternative to 3.x (but not 2.x)
+
+Source Code Compilation
+-----------------------
+
+Once you have installed all the prerequisites do
+
+cd <compilation directory>
+git clone https://github.com/ntop/nDPI.git
+cd nDPI; ./autogen.sh; ./configure; make; cd ..
+git clone https://github.com/ntop/ntopng.git
+cd ntopng
+./autogen.sh
+./configure
+make
+
+Binary Packages
+---------------
+
+Debian/CentOS/Rocky/Windows/MacOS/Raspberry 
+Go to http://packages.ntop.org
+

@@ -1,0 +1,14 @@
+{
+  "name": "ntopng-root",
+  "private": true,
+  "scripts": {
+    "install": "cd pro && npm install",
+    "watch": "cd pro && npm run watch",
+    "build": "cd pro && npm run build",
+    "build:dev": "cd pro && npm run build:dev",
+    "build:js": "cd pro && npm run build:js",
+    "css:lint": "cd pro && npm run css:lint",
+    "js:lint": "cd pro && npm run js:lint",
+    "detect_circular_link": "cd pro && npm run detect_circular_link"
+  }
+}

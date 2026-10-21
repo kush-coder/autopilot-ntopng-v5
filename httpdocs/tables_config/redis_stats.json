@@ -1,0 +1,58 @@
+{
+	"id": "redis_stats",
+	"data_url": "lua/rest/v2/get/redis/redis_stats.lua",
+	"use_current_page": false,
+	"enable_search": false,
+	"paging": false,
+	"display_empty_rows": true,
+	"default_sort": {
+		"column_id": "command",
+		"sort": 1
+	},
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"sticky": true,
+			"max-width": "10px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "button_list",
+			"button_def_array": [
+				{
+					"id": "timeseries",
+					"icon": "fas fa-lg fa-chart-area",
+					"title_i18n": "prefs.timeseries",
+					"class": [
+						"btn-info"
+					],
+					"event_id": "click_button_timeseries"
+				}
+			]
+		},
+		{
+			"id": "command",
+			"title_i18n": "please_wait_page.command",
+			"data_field": "command",
+            "min-width": "500px",
+			"sortable": true,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "hits",
+			"title_i18n": "system_stats.redis.tot_calls",
+			"data_field": "hits",
+			"sortable": true,
+            "min-width": "330px",
+			"class": [
+				"text-nowrap",
+                "text-center"
+			]
+		}
+	]
+}

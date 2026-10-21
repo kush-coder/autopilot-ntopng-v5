@@ -1,0 +1,105 @@
+/*
+ *
+ * (C) 2013-26 - ntop.org
+ *
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *
+ */
+
+#include "ntop_includes.h"
+
+/* *************************************** */
+
+FlowTrafficStats::FlowTrafficStats() : PartializableFlowTrafficStats() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
+  ndpi_init_data_analysis(&cli2srv_bytes_stats, 0),
+      ndpi_init_data_analysis(&srv2cli_bytes_stats, 0);
+}
+
+/* *************************************** */
+
+FlowTrafficStats::FlowTrafficStats(const FlowTrafficStats& fts)
+    : PartializableFlowTrafficStats(fts) {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
+  ndpi_init_data_analysis(&cli2srv_bytes_stats, 0),
+      ndpi_init_data_analysis(&srv2cli_bytes_stats, 0);
+}
+
+/* *************************************** */
+
+FlowTrafficStats::~FlowTrafficStats() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[delete] %s", __FILE__);
+
+  ndpi_free_data_analysis(&cli2srv_bytes_stats, 0),
+      ndpi_free_data_analysis(&srv2cli_bytes_stats, 0);
+}
+
+/* *************************************** */
+
+const ndpi_analyze_struct* FlowTrafficStats::get_analize_struct(
+    bool cli2srv_direction) const {
+  return cli2srv_direction ? &cli2srv_bytes_stats : &srv2cli_bytes_stats;
+}
+
+/* *************************************** */
+
+void FlowTrafficStats::incStats(bool cli2srv_direction, u_int32_t num_pkts,
+                                u_int64_t pkts_bytes,
+                                u_int64_t payloads_bytes) {
+  PartializableFlowTrafficStats::incStats(cli2srv_direction, num_pkts,
+                                          pkts_bytes, payloads_bytes);
+
+  if (cli2srv_direction)
+    ndpi_data_add_value(&cli2srv_bytes_stats, pkts_bytes);
+  else
+    ndpi_data_add_value(&srv2cli_bytes_stats, pkts_bytes);
+}
+
+/* *************************************** */
+
+void FlowTrafficStats::setStats(bool cli2srv_direction, u_int32_t num_pkts,
+                                u_int64_t pkts_bytes,
+                                u_int64_t payloads_bytes) {
+  PartializableFlowTrafficStats::setStats(cli2srv_direction, num_pkts,
+                                          pkts_bytes, payloads_bytes);
+
+  if (cli2srv_direction) {
+    ndpi_init_data_analysis(&cli2srv_bytes_stats, 0);
+    ndpi_data_add_value(&cli2srv_bytes_stats, pkts_bytes);
+  } else {
+    ndpi_init_data_analysis(&srv2cli_bytes_stats, 0);
+    ndpi_data_add_value(&srv2cli_bytes_stats, pkts_bytes);
+  }
+}
+
+/* *************************************** */
+
+void FlowTrafficStats::swap() {
+  Utils::swapLen(&cli2srv_bytes_stats, &srv2cli_bytes_stats,
+                 sizeof(ndpi_analyze_struct));
+  Utils::swap32(&cli2srv_packets, &srv2cli_packets);
+  Utils::swap64(&cli2srv_bytes, &srv2cli_bytes);
+  Utils::swap64(&cli2srv_goodput_bytes, &srv2cli_goodput_bytes);
+  Utils::swapLen(&cli2srv_tcp_stats, &srv2cli_tcp_stats,
+                 sizeof(FlowTCPPacketStats));
+  Utils::swapLen(cli_host_score, srv_host_score,
+                 sizeof(u_int16_t) * MAX_NUM_SCORE_CATEGORIES);
+}

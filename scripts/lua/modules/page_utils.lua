@@ -1,0 +1,1607 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+local dirs = ntop.getDirs()
+local info = ntop.getInfo()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+
+require "label_utils"
+
+local script_manager = require("script_manager")
+local template_utils = require("template_utils")
+local recording_utils = require("recording_utils")
+local alert_entities = require("alert_entities")
+
+local page_utils = {}
+
+local is_nedge = ntop.isnEdge and ntop.isnEdge()
+-- #################################
+
+local active_section = nil
+local active_entry = nil
+local active_sub_entry = nil
+
+local zoneinfo = 'null'
+local temp_zoneinfo = ntop.getInfo().zoneinfo
+local newline = string.find(temp_zoneinfo, "\n")
+
+-- WARNING: in FreeBSD,	the zoneinfo ends with a newline character, so remove the newline and everything works fine
+if newline then
+    temp_zoneinfo = string.sub(temp_zoneinfo, 1, newline - 1)
+end
+
+if temp_zoneinfo ~= nil then
+    zoneinfo = "( /^[\\x00-\\xFF]*$/.test('" .. temp_zoneinfo .. "') && moment.tz.zone('" .. temp_zoneinfo ..
+                   "') != null ? '" .. temp_zoneinfo ..
+                   "' : function() { console.warn('zoneinfo not valid:' + (/^[\\x00-\\xFF]*$/.test('" .. temp_zoneinfo ..
+                   "') ? '" .. temp_zoneinfo .. "' : 'Invalid string') ); return null; }())"
+end
+
+-- #################################
+
+page_utils.menu_sections = {
+    monitoring = {
+        key = "monitoring",
+        i18n_title = "monitoring",
+        icon = "fas fa-satellite-dish"
+    },
+    dashboard = {
+        key = "dashboard",
+        i18n_title = "index_page.dashboard",
+        icon = "fas fa-tachometer-alt"
+    },
+    alerts = {
+        key = "alerts",
+        i18n_title = "details.alerts",
+        icon = "fas fa-exclamation-triangle"
+    },
+    flows = {
+        key = "flows",
+        i18n_title = "flows",
+        icon = "fas fa-stream"
+    },
+    hosts = {
+        key = "hosts",
+        i18n_title = "infrastructure",
+        icon = "fas fa-laptop"
+    },
+    maps = {
+        key = "maps",
+        i18n_title = "maps",
+        icon = "fas fa-map"
+    },
+    collection = {
+        key = "collection",
+        i18n_title = "flow_devices.exporters",
+        icon = "fas fa-file-export",
+        zmq_only = true --[[ only for non-packet ZMQ interfaces --]]
+    },
+    if_stats = {
+        key = "if_stats",
+        i18n_title = "interface",
+        icon = "fas fa-ethernet"
+    },
+    system_stats = {
+        key = "system_stats",
+        i18n_title = "system",
+        icon = "fas fa-desktop"
+    },
+    admin = {
+        key = "admin",
+        i18n_title = "settings",
+        icon = "fas fa-cog"
+    },
+    alert_exclusions = {
+        key = "alert_exclusions",
+        i18n_title = "edit_check.exclusion_list",
+        icon = "fas fa-bell-slash"
+    },
+    dev = {
+        key = "dev",
+        i18n_title = "developer",
+        icon = "fas fa-code"
+    },
+    about = {
+        key = "about",
+        i18n_title = "help",
+        icon = "fas fa-life-ring"
+    },
+    nanalyst = {
+        key = "nanalyst",
+        i18n_title = "nanalyst",
+        -- icon = "fa-solid fa-headset"
+        icon = "fa-solid fa-magnifying-glass-chart"
+        -- icon = "fa-solid fa-brain"
+    },
+    health = {
+        key = "health",
+        i18n_title = "health",
+        icon = "fas fa-laptop-medical"
+    },
+    pollers = {
+        key = "pollers",
+        i18n_title = "pollers",
+        icon = "fas fa-heartbeat"
+    },
+    tools = {
+        key = "tools",
+        i18n_title = "tools",
+        icon = "fas fa-cogs"
+    },
+    pools = {
+        key = "pools",
+        i18n_title = "pools.pools",
+        icon = "fas fa-users"
+    },
+    notifications = {
+        key = "notifications",
+        i18n_title = "endpoint_notifications.notifications",
+        icon = "fas fa-bell"
+    },
+    checks = {
+        key = "checks",
+        i18n_title = "about.checks"
+    },
+    policies = {
+        key = "policies",
+        i18n_title = "policies",
+        icon = "fa-solid fa-book-open"
+    },
+    as = {
+        key = "as",
+        i18n_title = "as",
+        icon = "fas fa-globe"
+    },
+    -- nEdge
+    views = {
+        key = "views",
+        i18n_title = "views",
+        icon = "fas fa-bars"
+    }
+}
+
+-- #################################
+
+-- help_link: this variable contains the contextual link to the documentation
+
+page_utils.menu_entries = {
+    -- Monitoring
+    active_monitoring = {
+        key = "active_monitoring",
+        i18n_title = "active_monitoring_stats.active_monitoring",
+        section = "monitoring"
+    },
+    network_discovery = {
+        key = "network_discovery",
+        i18n_title = "discover.network_discovery",
+        section = "monitoring"
+    },
+    active_scan = {
+        key = "active_scan",
+        i18n_title = "scan_hosts",
+        section = "monitoring"
+    },
+    
+    -- Dashboard
+    traffic_dashboard = {
+        key = "traffic_dashboard",
+        i18n_title = "dashboard.traffic_dashboard",
+        section = "dashboard",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/dashboard/dashboard.html"
+    },
+    traffic_report = {
+        key = "traffic_report",
+        i18n_title = "report.traffic_report",
+        section = "dashboard",
+        help_link = "https://www.ntop.org/guides/ntopng/flow_dump/clickhouse/reports.html"
+    },
+    assets_dashboard = {
+        key = "assets_dashboard",
+        i18n_title = "assets",
+        section = "dashboard",
+        help_link = "https://www.ntop.org/guides/ntopng/flow_dump/clickhouse/reports.html"
+    },
+    sites_dashboard = {
+        key = "sites_dashboard",
+        i18n_title = "sites_dashboard.sites",
+        section = "dashboard"
+    },
+    traffic_analysis = {
+        key = "traffic_analysis",
+        i18n_title = "db_explorer.traffic_analysis",
+        section = "dashboard",
+        help_link = "https://www.ntop.org/guides/ntopng/flow_dump/clickhouse/historical_flows.html"
+    },
+    hr_chart = {
+        key = "hr_chart",
+        i18n_title = "hr_chart.title",
+        section = "dashboard",
+        help_link = "https://www.ntop.org/guides/ntopng/flow_dump/clickhouse/historical_flows.html"
+    },
+
+    -- Alerts
+    detected_alerts = {
+        key = "detected_alerts",
+        i18n_title = "show_alerts.detected_alerts",
+        section = "alerts",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/alerts_explorer.html"
+    },
+    alerts_dashboard = {
+        key = "alerts_dashboard",
+        i18n_title = "alerts_dashboard.alerts_dashboard",
+        section = "alerts"
+    },
+    flow_alerts_explorer = {
+        key = "flow_alerts_explorer",
+        i18n_title = "flow_alerts_explorer.label",
+        section = "alerts"
+    },
+    alerts_list = {
+        key = "alerts_list",
+        i18n_title = "details.alerts_list",
+        section = "alerts"
+    },
+    alerts_analysis = {
+        key = "alerts_analysis",
+        i18n_title = "details.alerts_analysis",
+        section = "alerts"
+    },
+    alerts_graph = {
+        key = "alerts_graph",
+        i18n_title = "details.alerts_graph",
+        section = "alerts"
+    },
+    alerts_geomap = {
+        key = "alerts_geomap",
+        i18n_title = "details.alerts_geomap",
+        section = "alerts"
+    },
+    wazuh_alerts = {
+        key = "wazuh_alerts",
+        i18n_title = "wazuh_alert_config.wazuh_alerts",
+        section = "alerts"
+    },
+
+    -- Flows
+    flows = {
+        key = "flows",
+        i18n_title = "flows",
+        section = "flows",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/flows/flows.html"
+    },
+    active_flows = {
+        key = "active_flows",
+        i18n_title = "active_flows",
+        section = "flows"
+    },
+    flow_details = {
+        key = "flow_details",
+        i18n_title = "flow_details.flow_details",
+        section = "flows"
+    },
+    db_explorer = {
+        key = "db_explorer",
+        i18n_title = "db_explorer.historical_data_explorer",
+        section = "flows",
+        help_link = "https://www.ntop.org/guides/ntopng/flow_dump/clickhouse/historical_flows.html"
+    },
+    historical_flows = {
+        key = "db_explorer",
+        i18n_title = "historical_flows",
+        section = "flows",
+        help_link = "https://www.ntop.org/guides/ntopng/flow_dump/clickhouse/historical_flows.html"
+    },
+    server_ports = {
+        key = "server_ports",
+        i18n_title = "server_ports.server_ports",
+        section = "flows",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/flows/server_ports.html"
+    },
+    bgp_looking_glass = {
+        key = "bgp_looking_glass",
+        i18n_title = "bgp_looking_glass",
+        section = "flows",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/flows/server_ports.html"
+    },
+    bgp_looking_glass_asn = {
+        key = "bgp_looking_glass_asn",
+        i18n_title = "bgp_looking_glass",
+        section = "views",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/flows/server_ports.html"
+    },
+
+    -- Hosts
+    hosts = {
+        key = "hosts",
+        i18n_title = "hosts",
+        section = "if_stats",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/hosts/hosts.html#id1"
+    },
+    hosts_asn_mode = {
+        key = "hosts",
+        i18n_title = "hosts",
+        section = "views",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/hosts/hosts.html#id1"
+    },
+    devices = {
+        key = "devices",
+        i18n_title = "layer_2",
+        section = "if_stats"
+    },
+    assets = {
+        key = "assets",
+        i18n_title = "assets",
+        section = "if_stats"
+    },
+
+    -- Chatbot (nAnalyst)
+    nanalyst = {
+        key = "nanalyst",
+        i18n_title = "nanalyst",
+        section = "nanalyst"
+    },
+    ai_usage_stats = {
+        key = "ai_usage_stats",
+        i18n_title = "ai_usage_stats",
+        section = "nanalyst"
+    },
+    ai_policy = {
+        key = "ai_policy",
+        i18n_title = "ai_policy",
+        section = "nanalyst"
+    },
+    ai_audit = {
+        key = "ai_audit",
+        i18n_title = "ai_audit",
+        section = "nanalyst"
+    },
+    analyst_pipeline = {
+        key = "analyst_pipeline",
+        i18n_title = "analyst_pipeline",
+        section = "nanalyst"
+    },
+    ai_dashboard = {
+        key = "ai_dashboard",
+        i18n_title = "ai_dashboard.title",
+        section = "dashboard"
+    },
+
+    -- Interface
+    interface = {
+        key = "interface",
+        i18n_title = "interface_details",
+        section = "if_stats"
+    },
+    interface_lightview = {
+        key = "interface",
+        i18n_title = "interface_details",
+        section = "if_stats_lightview"
+    },
+    networks = {
+        key = "networks",
+        i18n_title = "networks",
+        section = "if_stats",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/interface/networks.html"
+    },
+    vlans = {
+        key = "vlans",
+        i18n_title = "vlan_stats.vlans",
+        section = "if_stats"
+    },
+    host_pools = {
+        key = "host_pools",
+        i18n_title = "host_pools.host_pools",
+        section = "if_stats"
+    },
+    autonomous_systems = {
+        key = "autonomous_systems",
+        i18n_title = "as_stats.autonomous_systems",
+        section = "if_stats",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/interface/autonomous_systems.html"
+    },
+
+    -- AS Mode
+    exporters_interfaces_traffic_asn_mode = {
+        key = "exporters_interfaces_traffic_asn_mode",
+        i18n_title = "exporters_interfaces_configuration.network_communications",
+        section = "views"
+    },
+    historical_autonomous_systems_asn_mode = {
+        key = "historical_autonomous_systems_asn_mode",
+        i18n_title = "db_explorer.historical_data_explorer",
+        section = "views"
+    },
+    active_flows_asn_mode = {
+        key = "active_flows_asn_mode",
+        i18n_title = "active_flows",
+        section = "views"
+    },
+    historical_flows_asn_mode = {
+        key = "historical_flows_asn_mode",
+        i18n_title = "historical_flows",
+        section = "views"
+    },
+    server_ports_asn_mode = {
+        key = "server_ports",
+        i18n_title = "server_ports.server_ports",
+        section = "views"
+    },
+
+    countries = {
+        key = "countries",
+        i18n_title = "countries",
+        section = "if_stats",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/interface/countries.html"
+    },
+    operating_systems = {
+        key = "operating_systems",
+        i18n_title = "operating_systems",
+        section = "if_stats",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/interface/operating_systems.html"
+    }, 
+    containers = {
+        key = "containers",
+        i18n_title = "containers_stats.containers",
+        section = "if_stats"
+    },
+    pods = {
+        key = "pods",
+        i18n_title = "containers_stats.pods",
+        section = "if_stats"
+    },
+
+    -- Pollers
+    snmp = {
+        key = "snmp",
+        i18n_title = "prefs.snmp",
+        section = "pollers"
+    },
+    assets_snmp = {
+        key = "assets_snmp",
+        i18n_title = "assets_snmp",
+        section = "pollers"
+    },
+    snmp_monitoring = {
+        key = "snmp_monitoring",
+        i18n_title = "prefs.snmp",
+        section = "monitoring"
+    },
+    infrastructure_dashboard = {
+        key = "infrastructure_dashboard",
+        i18n_title = "infrastructure_dashboard.infrastructure_dashboard",
+        section = "monitoring"
+    },
+
+    -- Status (Health)
+    system_status = {
+        key = "system_status",
+        i18n_title = "system_status",
+        section = "health"
+    },
+    interfaces_status = {
+        key = "interfaces_status",
+        i18n_title = "system_interfaces_status",
+        section = "health"
+    },
+    alerts_status = {
+        key = "alerts_status",
+        i18n_title = "system_alerts_status",
+        section = "health"
+    },
+    influxdb_status = {
+        key = "influxdb_status",
+        i18n_title = "InfluxDB",
+        section = "health"
+    },
+    redis_status = {
+        key = "redis_status",
+        i18n_title = "Redis",
+        section = "health"
+    },
+    clickhouse_status = {
+        key = "clickhouse",
+        i18n_title = "ClickHouse",
+        section = "health"
+    },
+
+    -- exporters
+    event_exporters = {
+        key = "event_exporters",
+        i18n_title = "event_exporters.event_exporters",
+        section = "if_stats"
+    },
+    sflow_exporters = {
+        key = "sflow_exporters",
+        i18n_title = "flows_page.sflow_devices",
+        section = "if_stats"
+    },
+    exporters = {
+        key = "exporters",
+        i18n_title = "flow_devices.flow_exporters",
+        section = "if_stats",
+        help_link = "https://www.ntop.org"
+    },
+    nprobe = {
+        key = "nprobe",
+        i18n_title = "flow_devices.nprobe_instances",
+        section = "if_stats"
+    },
+    exporters_interfaces_stats = {
+        key = "exporters_interfaces_stats",
+        i18n_title = "flow_devices.exporters_interfaces_stats",
+        section = "if_stats"
+    },
+    observation_points = {
+        key = "observation_points",
+        i18n_title = "flow_devices.observation_points",
+        section = "if_stats",
+        help_link = "https://www.ntop.org"
+    },
+
+    -- Map
+    analysis_map = {
+        key = "analysis_map",
+        i18n_title = "analysis",
+        section = "if_stats"
+    },
+    geo_map = {
+        key = "geo_map",
+        i18n_title = "geo_map.geo_map",
+        section = "if_stats",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/network_interface/maps/geo_map.html"
+    },
+    hosts_map = {
+        key = "hosts_map",
+        i18n_title = "flows_page.hosts",
+        section = "if_stats"
+    },
+
+    -- Settings
+    nedge_users = {
+        key = "nedge_users",
+        i18n_title = "manage_users.manage_users",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/nedge/users.html#"
+    },
+    manage_users = {
+        key = "manage_users",
+        i18n_title = ternary(is_nedge, "nedge.system_users", "manage_users.manage_users"),
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/settings/users.html"
+    },
+    preferences = {
+        key = "preferences",
+        i18n_title = "prefs.preferences",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/settings/preferences.html"
+    },
+    categories = {
+        key = "categories",
+        i18n_title = "custom_categories.apps_and_categories",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/settings/applications_and_categories.html#custom-applications"
+    },
+    category_lists = {
+        key = "category_lists",
+        i18n_title = "category_lists.category_lists",
+        section = "admin"
+    },
+    tags = {
+        key = "tags",
+        i18n_title = "tags_page.tags",
+        section = "admin"
+    },
+    conf_backup = {
+        key = "conf_backup",
+        i18n_title = "conf_backup.conf_backup",
+        section = "admin"
+    },
+    conf_restore = {
+        key = "conf_restore",
+        i18n_title = "conf_backup.conf_restore",
+        section = "admin"
+    },
+    manage_configurations = {
+        key = "manage_configurations",
+        i18n_title = "manage_configurations.manage_configurations",
+        section = "admin"
+    },
+
+    -- Policies
+    device_protocols = {
+        key = "device_protocols",
+        i18n_title = "device_protocols.device_protocols",
+        section = "admin"
+    },
+    access_control_list = {
+        key = "access_control_list",
+        i18n_title = "access_control_list",
+        section = "admin"
+    },
+    network_config = {
+        key = "network_config",
+        i18n_title = "checks.network_configuration",
+        section = "admin"
+    },
+    traffic_rules = {
+        key = "traffic_rules",
+        i18n_title = "if_stats_config.traffic_rules",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/policies/traffic_rules.html"
+    },
+    profiles = {
+        key = "profiles",
+        i18n_title = "traffic_profiles.traffic_profiles",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/policies/traffic_profiles.html"
+    },
+    alert_exclusions = {
+        key = "alert_exclusions",
+        i18n_title = "edit_check.exclusion_list",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/behavioural_checks_exclusion.html"
+    },
+    alert_exclusions_hosts = {
+        key = "alert_exclusions",
+        subkey = "hosts",
+        i18n_title = alert_entities.host.i18n_label,
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    alert_exclusions_flows = {
+        key = "alert_exclusions",
+        subkey = "flows",
+        i18n_title = alert_entities.flow.i18n_label,
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    alert_exclusions_domains = {
+        key = "alert_exclusions",
+        subkey = "domains",
+        i18n_title = "domain",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config = {
+        key = "scripts_config",
+        i18n_title = "about.checks",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_all = {
+        key = "scripts_config",
+        subkey = "all",
+        i18n_title = "all",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_hosts = {
+        key = "scripts_config",
+        subkey = "hosts",
+        i18n_title = alert_entities.host.i18n_label,
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_interfaces = {
+        key = "scripts_config",
+        subkey = "interfaces",
+        i18n_title = alert_entities.interface.i18n_label,
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_networks = {
+        key = "scripts_config",
+        subkey = "networks",
+        i18n_title = alert_entities.network.i18n_label,
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_snmp_devices = {
+        key = "scripts_config",
+        subkey = "snmp_devices",
+        i18n_title = alert_entities.snmp_device.i18n_label,
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_flows = {
+        key = "scripts_config",
+        subkey = "flows",
+        i18n_title = alert_entities.flow.i18n_label,
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_system = {
+        key = "scripts_config",
+        subkey = "system",
+        i18n_title = alert_entities.system.i18n_label,
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_syslog = {
+        key = "scripts_config",
+        subkey = "syslog",
+        i18n_title = "syslog.syslog",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_active_monitoring = {
+        key = "scripts_config",
+        subkey = "active_monitoring",
+        i18n_title = "active_monitoring",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    scripts_config_as = {
+        key = "scripts_config",
+        subkey = "as",
+        i18n_title = "as",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/others/available_alerts.html"
+    },
+    device_exclusions = {
+        key = "device_exclusions",
+        i18n_title = "edit_check.device_exclusion",
+        section = "admin"
+    },
+
+    -- Notifications
+    endpoint_notifications = {
+        key = "notifications",
+        i18n_title = "endpoint_notifications.endpoint_list",
+        section = "alerts",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html#available-endpoints"
+    },
+    endpoint_recipients = {
+        key = "notifications",
+        i18n_title = "endpoint_notifications.enpoint_recipients_list",
+        section = "alerts",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html#available-endpoints"
+    },
+
+    -- Tools
+    export_data = {
+        key = "export_data",
+        i18n_title = "manage_data.export",
+        section = "admin"
+    },
+
+    -- Pools
+    host_members = {
+        key = "host_members",
+        i18n_title = "host_pools.host_members",
+        section = "admin"
+    },
+    manage_pools = {
+        key = "manage_pools",
+        i18n_title = "pools.pools",
+        section = "admin"
+    },
+
+    -- Home
+    live_capture = {
+        key = "live_capture",
+        i18n_title = "live_capture.active_live_captures",
+        section = "admin"
+    },
+
+    -- Developer
+    directories = {
+        key = "directories",
+        i18n_title = "about.directories",
+        section = "dev",
+        help_link = "https://www.ntop.org/guides/ntopng/scripts/distributing_scripts.html"
+    },
+    checks_dev = {
+        key = "checks_dev",
+        i18n_title = "about.checks",
+        section = "dev",
+        help_link = "https://www.ntop.org/guides/ntopng/scripts/checks.html"
+    },
+    analyze_db = {
+        key = "analyze_db",
+        i18n_title = "about.analyze_db",
+        section = "dev",
+        help_link = "https://www.ntop.org/guides/ntopng/advanced_features/index.html"
+    },
+    analyze_pcap = {
+        key = "analyze_pcap",
+        i18n_title = "about.analyze_pcap",
+        section = "dev",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/developer/analyze_pcap_file.html"
+    },
+    alert_definitions = {
+        key = "alert_definitions",
+        i18n_title = "about.alert_defines",
+        section = "dev",
+        help_link = "https://www.ntop.org/guides/ntopng/scripts/alert_definitions.html"
+    },
+    ts_definitions = {
+        key = "ts_definitions",
+        i18n_title = "about.ts_defines",
+        section = "dev",
+    },
+    api = {
+        key = "api",
+        i18n_title = "lua_c_api",
+        section = "dev"
+    },
+    rest_api = {
+        key = "rest_api",
+        i18n_title = "swagger_api",
+        section = "dev"
+    },
+    manage_data = {
+        key = "manage_data",
+        i18n_title = "manage_data.manage_data",
+        section = "dev",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/developer/manage_data.html"
+    },
+
+    -- Help
+    about = {
+        key = "about",
+        i18n_title = "about.about",
+        section = "about",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/help/about.html"
+    },
+    license = {
+        key = "license",
+        i18n_title = "license_page.license",
+        section = "about"
+    },
+    limits = {
+        key = "limits",
+        i18n_title = "limits_page.limits",
+        section = "about"
+    },
+    handle_licenses = {
+        key = "handle_licenses",
+        i18n_title = "about.handle_licenses.page_title",
+        section = "about"
+    },
+    blog = {
+        key = "blog",
+        i18n_title = "about.ntop_blog",
+        section = "about"
+    },
+    telegram = {
+        key = "telegram",
+        i18n_title = "about.telegram",
+        section = "about"
+    },
+    report_issue = {
+        key = "report_issue",
+        i18n_title = "about.report_issue",
+        section = "about"
+    },
+    manual = {
+        key = "manual",
+        i18n_title = "about.readme_and_manual",
+        section = "about"
+    },
+    suggest_feature = {
+        key = "suggest_feature",
+        i18n_title = "about.suggest_feature",
+        section = "about"
+    },
+
+    -- Just a divider for horizontal rows in the menu
+    divider = {
+        key = "divider"
+    },
+
+    -- nEdge
+    gateways_users = {
+        key = "gateways_users",
+        i18n_title = "dashboard.gateways_users",
+        section = "dashboard"
+    },
+    nedge_flows = {
+        key = "nedge_flows",
+        i18n_title = "flows",
+        section = "views"
+    },
+    nedge_hosts = {
+        key = "nedge_hosts",
+        i18n_title = "hosts",
+        section = "views"
+    },
+    nedge_devices = {
+        key = "nedge_devices",
+        i18n_title = "mac_stats.devices",
+        section = "views"
+    },
+    nedge_db_explorer = {
+        key = "nedge_db_explorer",
+        i18n_title = "historical_flows",
+        section = "views"
+    },
+    nedge_users_view = {
+        key = "nedge_users",
+        i18n_title = "manage_users.manage_users",
+        section = "views"
+    },
+    nedge_vlans = {
+        key = "nedge_vlans",
+        i18n_title = "vlan_stats.vlan_list",
+        section = "views"
+    },
+    nedge_networks = {
+        key = "nedge_networks",
+        i18n_title = "networks",
+        section = "views"
+    },
+    nedge_os = {
+        key = "nedge_os",
+        i18n_title = "operating_systems",
+        section = "views"
+    },
+    nedge_geo_map = {
+        key = "nedge_geo_map",
+        i18n_title = "geo_map",
+        section = "views"
+    },
+    nedge_interfaces = {
+        key = "nedge_interfaces",
+        i18n_title = "interfaces",
+        section = "dashboard"
+    },
+    users = {
+        key = "users",
+        i18n_title = "users.users",
+        section = "admin",
+        help_link = "https://www.ntop.org/guides/ntopng/user_interface/shared/settings/preferences.html#user-authentication"
+    },
+    system_setup = {
+        key = "system_setup",
+        i18n_title = "nedge.system_setup",
+        section = "system_stats",
+        help_link = "https://www.ntop.org/guides/nedge/get_started.html"
+    },
+    dhcp_static_leases = {
+        key = "dhcp_static_leases",
+        i18n_title = "nedge.static_dhcp_leases",
+        section = "system_stats"
+    },
+    dhcp_active_leases = {
+        key = "dhcp_active_leases",
+        i18n_title = "nedge.active_dhcp_leases",
+        section = "system_stats"
+    },
+    port_forwarding = {
+        key = "port_forwarding",
+        i18n_title = "nedge.port_forwarding",
+        section = "system_stats"
+    },
+    rules_config = {
+        key = "rules_config",
+        i18n_title = "nedge.rules_config_title",
+        section = "system_stats"
+    },
+    forwarders_config = {
+        key = "forwarders_config",
+        i18n_title = "nedge.repeaters_config_title",
+        section = "system_stats"
+    }
+}
+
+-- Extend the menu entries with the scripts
+local menu, entries_data = script_manager.getMenuEntries()
+page_utils.scripts_menu = menu or {}
+
+if entries_data then
+    for k, v in pairs(entries_data) do
+        page_utils.menu_entries[k] = v
+    end
+end
+
+-- #################################
+
+-- NOTE: this function must be called after page_utils.print_header_and_set_active_menu_entry
+function page_utils.print_page_title(title, mini_title)
+    local help_link = (page_utils.menu_entries[active_entry] or {}).help_link or ""
+    print("<header class='mb-3 d-flex align-items-center'>")
+    print("<h2 class='d-inline-block'>" .. title .. "</h2>")
+    if (not isEmptyString(help_link)) then
+        print("<a data-bs-toggle='tooltip' title='" .. i18n("open_documentation") .. "' target='_newtab' href='" ..
+                  help_link .. "' class='text-muted ms-auto'><i class='fas fa-question-circle'></i></a>")
+    end
+
+    if mini_title and not isEmptyString(mini_title) then
+        print("<small style='margin-left: auto;'>" .. mini_title .. "</small>")
+    end
+    print("</header>")
+
+end
+
+-- #################################
+
+-- NOTE: this function is called by the web pages in order to
+-- set the active entry and section and highlight it into the menu
+function page_utils.print_header_and_set_active_menu_entry(entry, i18n_params, alt_title)
+    require "locales_utils"
+    entry = entry or page_utils.menu_entries.traffic_dashboard
+
+    active_section = entry.section
+    active_entry = entry.key
+    if entry.subkey then
+        active_sub_entry = entry.subkey
+    end
+
+    local _title_key = entry.i18n_title
+    page_utils.print_header(alt_title or (_title_key and i18n(_title_key, i18n_params)) or _title_key or entry.key or "")
+end
+
+-- #################################
+
+function page_utils.get_active_section()
+    return (active_section)
+end
+
+function page_utils.get_active_entry()
+    return (active_entry)
+end
+
+function page_utils.get_active_sub_entry()
+    return (active_sub_entry)
+end
+
+-- #################################
+
+function page_utils.is_dark_mode_enabled(theme)
+
+    local dark_mode = false
+
+    local user = "admin"
+    if _SESSION["user"] then user = _SESSION["user"] end
+
+    local theme = theme or ntop.getPref("ntopng.user." .. user .. ".theme")
+    if not isEmptyString(theme) then
+        dark_mode = (theme == "dark")
+    end
+
+    return dark_mode
+end
+
+-- #################################
+
+function page_utils.print_header(title, addLoginJS)
+    local http_prefix = ntop.getHttpPrefix()
+    local static_file_epoch = ntop.getStaticFileEpoch() .. ""
+
+    local dark_mode = page_utils.is_dark_mode_enabled(_POST["toggle_theme"])
+    local page_title = i18n("welcome_to", {
+        product = info.product
+    })
+    local favicon_path = nil
+
+    local username = _SESSION["user"]
+    local date_format_pref = ntop.getPref("ntopng.user." .. username .. ".date_format")
+
+    local user_lang = ntop.getPref("ntopng.user." .. username .. ".language")
+    local language = ternary(isEmptyString(user_lang), "en", user_lang)
+    local locale_path = dirs.installdir .. "/scripts/locales/" .. language .. ".lua"
+    local locale_when = ntop.fileLastChange(locale_path)
+
+    if title ~= nil then
+        page_title = info.product .. " - " .. title
+    end
+
+    print [[
+   <!DOCTYPE html>
+   <html>
+   <head>
+    <title>]]
+    print(page_title)
+    print [[</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+
+    <link href="]]
+    print(http_prefix)
+    print [[/dist/third-party.css?]]
+    print(static_file_epoch)
+    print [[" rel="stylesheet">
+    <link href="]]
+    print(http_prefix)
+    print [[/dist/ntopng.css?]]
+    print(static_file_epoch)
+    print [[" rel="stylesheet">
+    <link href="]]
+    print(http_prefix)
+    print [[/dist/white-mode.css?]]
+    print(static_file_epoch)
+    print [[" rel="stylesheet">
+    <link id="dark-mode-css" href="]]
+    print(http_prefix)
+    print [[/dist/dark-mode.css?]]
+    print(static_file_epoch)
+    print [["]]
+    if not dark_mode then print [[ disabled]] end
+    print [[ rel="stylesheet">]]
+
+    if ((ntop.isPro and ntop.isPro()) or (ntop.isnEdge and ntop.isnEdge())) and ntop.exists(dirs.installdir .. "/httpdocs/img/custom_favicon.ico") then
+        favicon_path = http_prefix .. "/img/custom_favicon.ico"
+    end
+    if (favicon_path ~= nil) then
+        print [[<link href="]]
+        print(favicon_path)
+        print [[" rel="icon">]]
+    else
+        print [[<link href="]]
+        print(http_prefix)
+        print [[/favicon.ico" rel="icon">]]
+    end
+
+    print [[
+    <style>
+      .flag {
+        width: 16px;
+        height: 11px;
+        margin-top: -5px;
+        background:url(]]
+    print(http_prefix)
+    print [[/dist/images/flags.png) no-repeat
+      }
+    </style>
+
+    ]]
+
+    if addLoginJS then
+        print [[<script type="application/javascript" src="]]
+        print(http_prefix)
+        print [[/dist/login.js?]]
+        print(static_file_epoch)
+        print [["></script>]]
+    end
+
+    if (ntop.isPro and ntop.isPro() and ntop.exists(dirs.installdir .. "/httpdocs/css/custom-theme.css")) then
+        print [[
+        <link href="]]
+        print(http_prefix)
+        print [[/css/custom-theme.css?]]
+        print(static_file_epoch)
+        print [[" rel="stylesheet">
+      ]]
+    end
+
+    print [[
+    <script>
+    // router.js reads this global at module-eval time to set Vue Router's base path
+    const http_prefix = "]]
+    print(ntop.getHttpPrefix())
+    print [[";
+    </script>
+    <script type="application/javascript" src="]]
+    print(http_prefix)
+    print("/lua/locale.lua?" .. locale_when .. "&user_language=" .. language);
+    print [["> </script>
+    <script type="application/javascript" src="]]
+    print(http_prefix)
+    print [[/dist/third-party.js?]]
+    print(static_file_epoch)
+    print [["></script>
+    <script type="application/javascript" src="]]
+    print(http_prefix)
+    print [[/dist/ntopng.js?]]
+    print(static_file_epoch)
+    print [["></script>
+    <script>
+    const ntop_zoneinfo = ]]
+    print(zoneinfo)
+    print [[;
+    const date_format_pref = "]]
+    print(date_format_pref)
+    print [[";
+    const mode = "]]
+    print(dark_mode and "dark" or "light")
+    print [[";
+    document.documentElement.setAttribute('data-theme', mode);
+    </script>
+    </head>]]
+    print([[
+     <body class="body ]] .. (dark_mode and "dark" or "") .. [[">
+  ]])
+end
+
+-- #################################
+
+function page_utils.print_header_minimal(title, addLoginJS)
+    local http_prefix = ntop.getHttpPrefix()
+
+    local page_title = i18n("welcome_to", {
+        product = info.product
+    })
+    if title ~= nil then
+        page_title = info.product .. " - " .. title
+    end
+
+    local admin_lang = ntop.getPref("ntopng.user.admin.language")
+    local language = ternary(isEmptyString(admin_lang), "en", admin_lang)
+    local locale_path = dirs.installdir .. "/scripts/locales/" .. language .. ".lua"
+    local locale_when = ntop.fileLastChange(locale_path)
+    local static_file_epoch = ntop.getStaticFileEpoch() .. ""
+
+    print [[
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>]]
+    print(page_title)
+    print [[</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+
+        <link href="]]
+    print(http_prefix)
+    print [[/dist/third-party.css?]]
+    print(static_file_epoch)
+    print [[" rel="stylesheet">
+        <link href="]]
+    print(http_prefix)
+    print [[/dist/ntopng.css?]]
+    print(static_file_epoch)
+    print [[" rel="stylesheet">
+          ]]
+
+    if ((ntop.isPro and ntop.isPro()) or (ntop.isnEdge and ntop.isnEdge())) and ntop.exists(dirs.installdir .. "/httpdocs/img/custom_favicon.ico") then
+        favicon_path = http_prefix .. "/img/custom_favicon.ico"
+    end
+    if (favicon_path ~= nil) then
+        print [[<link href="]]
+        print(favicon_path)
+        print [[" rel="icon">]]
+    else
+        print [[<link href="]]
+        print(http_prefix)
+        print [[/favicon.ico" rel="icon">]]
+    end
+
+    print [[
+          <style>
+          .flag {
+            width: 16px;
+            height: 11px;
+            margin-top: -5px;
+            background:url(]]
+    print(http_prefix)
+    print [[/dist/images/flags.png) no-repeat
+          }
+          </style>
+          <script type="application/javascript" src="]]
+    print(http_prefix)
+    print("/lua/locale.lua?" .. locale_when .. "&user_language=" .. language);
+    print [["> </script>
+          <script type="application/javascript" src="]]
+    print(http_prefix)
+    print [[/dist/third-party.js?]]
+    print(static_file_epoch)
+    print [["></script>
+          <script type="application/javascript" src="]]
+    print(http_prefix)
+    print [[/dist/ntopng.js?]]
+    print(static_file_epoch)
+    print [["></script>
+          <script> const ntop_zoneinfo = ]]
+    print(zoneinfo)
+    print [[;</script>          
+      </head>
+      <body>
+
+]]
+end
+
+-- #################################
+
+function page_utils.get_navbar_context(title, base_url, items_table, label_url, back_url)
+    local help_link = (page_utils.menu_entries[active_entry] or {}).help_link or nil
+    local icon = (page_utils.menu_sections[active_section] or {}).icon or ""
+
+    local navbar = {
+        main_icon = icon,
+        main_title = title,
+        base_url = base_url,
+        items_table = items_table,
+        label_url = label_url,
+        back_url = back_url,
+        help_link = help_link
+    }
+    return navbar
+end
+
+-- #################################
+
+function page_utils.get_new_navbar_context(title, base_url, items_table, label_url, back_url)
+    local help_link = (page_utils.menu_entries[active_entry] or {}).help_link or nil
+    local icon = (page_utils.menu_sections[active_section] or {}).icon or ""
+
+    local navbar = {
+        main_title = {
+            icon = icon,
+            label = title
+        },
+        base_url = base_url,
+        items_table = items_table,
+        label_url = label_url,
+        back_url = back_url,
+        help_link = help_link
+    }
+    return navbar
+end
+-- #################################
+
+function page_utils.print_navbar(title, base_url, items_table, label_url, back_url, end_items)
+    local help_link = (page_utils.menu_entries[active_entry] or {}).help_link or nil
+    local icon = (page_utils.menu_sections[active_section] or {}).icon or ""
+
+    local context = {
+        navbar = {
+            title = "<i class='" .. icon .. "'></i>" .. " " .. title,
+            base_url = base_url,
+            items_table = items_table,
+            label_url = label_url,
+            back_url = back_url,
+            help_link = help_link,
+            end_items = end_items
+        }
+    }
+    print(template_utils.gen("pages/components/page-navbar.template", context))
+end
+
+-- ##############################################
+
+function page_utils.get_interface_list()
+    local interfaces = {}
+    local iface_names = interface.getIfNames()
+    local is_system_interface = page_utils.is_system_view()
+
+    local num_ifaces = 0
+    for k, v in pairs(iface_names) do
+        num_ifaces = num_ifaces + 1
+    end
+
+    local ifs = interface.getStats()
+    local is_pcap_dump = interface.isPcapDumpInterface()
+    local is_packet_interface = interface.isPacketInterface()
+    local views = {}
+    local drops = {}
+    local recording = {}
+    local packetinterfaces = {}
+    local ifnames = {}
+    local ifdescr = {}
+    local ifHdescr = {}
+    local ifCustom = {}
+    local dynamic = {}
+
+    for v, k in pairs(iface_names) do
+        interface.select(k)
+        local _ifstats = interface.getStats()
+        ifnames[_ifstats.id] = k
+        ifdescr[_ifstats.id] = _ifstats.description
+        -- io.write("["..k.."/"..v.."][".._ifstats.id.."] "..ifnames[_ifstats.id].."=".._ifstats.id.."\n")
+        if (_ifstats.isView == true) then
+            views[k] = true
+        end
+        if (interface.isSubInterface()) then
+            dynamic[k] = true
+        end
+        if (recording_utils.isEnabled(_ifstats.id)) then
+            recording[k] = true
+        end
+        if (interface.isPacketInterface()) then
+            packetinterfaces[k] = true
+        end
+        if (_ifstats.stats_since_reset.drops * 100 > _ifstats.stats_since_reset.packets) then
+            drops[k] = true
+        end
+        ifHdescr[_ifstats.id] = getHumanReadableInterfaceName(_ifstats.description .. "")
+        ifCustom[_ifstats.id] = _ifstats.customIftype
+    end
+
+    -- First round: only physical interfaces
+    -- Second round: only virtual interfaces
+
+    for round = 1, 2 do
+
+        for k, _ in pairsByValues(ifHdescr, asc) do
+
+            if ((round == 1) and (ifCustom[k] ~= nil)) or (((round == 2) and (ifCustom[k] == nil))) then
+                goto continue
+            end
+
+            local v = ifnames[k]
+
+            -- table.clone needed to modify some parameters while keeping the original unchanged
+            local page_params = table.clone(_GET)
+            page_params.ifid = k
+
+            local url_query = getPageUrl("", page_params)
+
+            -- NOTE: the actual interface switching is performed in C in LuaEngine::handle_script_request
+            local action_url = ""
+
+            if (is_system_interface) then
+                action_url = ntop.getHttpPrefix() .. '/' .. url_query
+            else
+                action_url = url_query
+            end
+
+            local descr = getHumanReadableInterfaceName(v .. "")
+
+            if (string.contains(descr, "{")) then -- Windows
+                descr = ifdescr[k]
+            else
+
+                if (descr ~= ifdescr[k]) and (not views[v]) then
+
+                    if (descr == shortenCollapse(ifdescr[k])) then
+                        descr = ifdescr[k]
+                    else
+                        descr = descr .. " (" .. ifdescr[k] .. ")" -- Add description
+                    end
+                end
+
+            end
+
+            interfaces[#interfaces + 1] = {
+                is_virtual = (round == 2), -- Is the interface virtual or physical?
+                is_paused = isPausedInterface(v), -- Is the interfaces paused?
+                is_selected = (v == ifname) and not is_system_interface, -- Is the in
+                is_dynamic = (dynamic[v]),
+                is_recording = (recording[v]),
+                has_drops = (drops[v]),
+                has_views = (views[v]),
+                ifid = k,
+                action_url = action_url,
+                human_name = descr
+            }
+
+            ::continue::
+        end
+    end
+
+    interface.select(ifs.id .. "")
+
+    return interfaces
+end
+
+function page_utils.generate_info_stats()
+
+    local _ifstats = interface.getStats()
+
+    local upload_stats = ""
+    local download_stats = ""
+
+    for _, v in pairs(_ifstats["download_stats"]) do
+        download_stats = download_stats .. tostring(-v * 1000 * 8) .. "," -- push the values in bit, they are stored as KB in c++
+    end
+
+    for _, v in pairs(_ifstats["upload_stats"]) do
+        upload_stats = upload_stats .. tostring(v * 1000 * 8) .. "," -- push the values in bit, they are stored as KB in c++
+    end
+
+    download_stats = download_stats:sub(1, -2)
+    upload_stats = upload_stats:sub(1, -2)
+    if (_ifstats.id == -1) then
+        return ""
+    end
+    if _ifstats.has_traffic_directions then
+        return ([[
+         <a href=']] .. ntop.getHttpPrefix() .. [[/lua/if_stats.lua'>
+            <div class='up'>
+               <i class="fas fa-arrow-up"></i>
+               <span style='display: none;' class="network-load-chart-upload">]] .. upload_stats .. [[</span>
+               <span class="text-end chart-upload-text"></span>
+            </div>
+            <div class='down'>
+               <i class="fas fa-arrow-down"></i>
+               <span style='display: none;' class="network-load-chart-download">]] .. download_stats .. [[</span>
+               <span class="text-end chart-download-text"></span>
+            </div>
+         </a>
+      ]])
+    else
+        return ([[
+         <a href=']] .. ntop.getHttpPrefix() .. [[/lua/if_stats.lua'>
+            <span style='display: none;' class="network-load-chart-total">0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0</span>
+            <span class="text-end chart-total-text"></span>
+         </a>
+      ]])
+    end
+
+end
+
+-- ##############################################
+
+function page_utils.is_system_view()
+    return interface.getId() == tonumber(getSystemInterfaceId()) and isAdministrator()
+end
+
+-- ##############################################
+
+--- Check if the current page is valid
+--- @return boolean True if the current page is in available_pages, false otherwise
+function page_utils.is_valid_page(selected_page, available_pages)
+
+    if selected_page == nil then
+        traceError(TRACE_WARNING, TRACE_DEBUG, "selected_pages is nil!")
+        return false
+    end
+    if available_pages == nil then
+        traceError(TRACE_WARNING, TRACE_DEBUG, "available_pages is nil!")
+        return false
+    end
+    if type(available_pages) ~= 'table' then
+        traceError(TRACE_WARNING, TRACE_DEBUG, "available_pages is not a table!")
+        return false
+    end
+
+    -- do a linear search
+    for _, page in ipairs(available_pages) do
+        if (page == selected_page) then
+            return true
+        end
+    end
+
+    return false
+
+end
+
+-- ##############################################
+
+-- @brief Prepares the URL which will be used for the redirect after interface switch
+-- @param ifid The interface identifier of the interface that will be switched
+-- @param if_type The type of the interface that will be switched
+-- @return The URL
+function page_utils.switch_interface_form_action_url(active_ifid, switch_ifid, switch_if_type)
+    local action_url = ""
+    local page_params = table.clone(_GET)
+
+    -- Read the currently active page
+    local active_page = page_utils.get_active_section()
+
+    if active_ifid == tonumber(getSystemInterfaceId()) then
+        -- If the switch is between the system interface and a non-system interface
+        -- the URL is just the home
+        action_url = ntop.getHttpPrefix() .. '/'
+    elseif page_utils.menu_sections[active_page] and page_utils.menu_sections[active_page]["zmq_only"] and
+        switch_if_type ~= "zmq" and switch_if_type ~= "custom" then
+        -- If the interface that will be switched is non-ZMQ, and the currently
+        -- selected page is for ZMQ-only interfaces, then a redirection to root
+        -- is performed, rather than preserving the current page
+        action_url = ntop.getHttpPrefix() .. '/'
+    end
+
+    -- Attach the interface id of the interface that will be switched
+    page_params.ifid = switch_ifid
+
+    page_params["observationPointId"] = nil
+
+    -- Return the url, preserving all existing page parameters (e.g., host=xx)
+    local res = getPageUrl(action_url, page_params)
+
+    return res
+end
+
+
+-- ##############################################
+function page_utils.page_not_enabled(i18n_key)
+    print([[
+    <div class="d-flex justify-content-center align-items-center" style="min-height: 60vh;">
+    <div class="text-center" style="max-width: 480px;">
+        <div class="mb-4">
+        <i class="fas fa-lock fa-4x text-muted"></i>
+        </div>
+        <h3 class="fw-semibold mb-2">]] .. i18n("feature_not_available") .. [[</h3>
+        <p class="text-muted mb-4">]] .. i18n(i18n_key) .. [[</p>
+    </div>
+    </div>
+    ]])
+    dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")
+    return
+end
+
+-- ##############################################
+
+return page_utils
+

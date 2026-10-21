@@ -1,0 +1,153 @@
+/*
+ *
+ * (C) 2015-26 - ntop.org
+ *
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *
+ */
+
+#ifndef _NETWORK_STATS_H_
+#define _NETWORK_STATS_H_
+
+#include "ntop_includes.h"
+
+class NetworkStats : public InterfaceMemberAlertableEntity,
+                     public GenericTrafficElement,
+                     public Score {
+ private:
+  u_int32_t network_id;
+  u_int16_t site_id;
+  u_int32_t numHosts;
+  u_int32_t alerted_flows_as_client, alerted_flows_as_server;
+  TrafficStats ingress, ingress_broadcast; /* outside -> network */
+  TrafficStats egress, egress_broadcast;   /* network -> outside */
+  TrafficStats inner, inner_broadcast; /* network -> network (local traffic) */
+  TcpPacketStats tcp_packet_stats_ingress, tcp_packet_stats_egress,
+      tcp_packet_stats_inner;
+  AlertCounter syn_flood_victim_alert;
+  AlertCounter flow_flood_victim_alert;
+  u_int32_t syn_recvd_last_min,
+      synack_sent_last_min; /* syn scan counters (victim) */
+  u_int32_t round_trip_time;
+
+#if defined(NTOPNG_PRO)
+  QoEStats qoe_stats;
+  InOutTraffic* network_matrix;
+  time_t nextMinPeriodicUpdate;
+#endif
+
+  static inline void incTcp(TcpPacketStats* tps, u_int32_t ooo_pkts,
+                            u_int32_t retr_pkts, u_int32_t lost_pkts,
+                            u_int32_t keep_alive_pkts) {
+    if (ooo_pkts) tps->incOOO(ooo_pkts);
+    if (retr_pkts) tps->incRetr(retr_pkts);
+    if (lost_pkts) tps->incLost(lost_pkts);
+    if (keep_alive_pkts) tps->incKeepAlive(keep_alive_pkts);
+  }
+
+#ifdef NTOPNG_PRO
+  void updateBehaviorStats(const struct timeval* tv);
+#endif
+
+ public:
+  NetworkStats(NetworkInterface* iface, u_int32_t _network_id);
+  virtual ~NetworkStats();
+
+  inline u_int16_t getSiteId() const { return site_id; }
+  void refreshSiteId();
+
+  inline bool trafficSeen() {
+    return ingress.getNumPkts() || egress.getNumPkts() || inner.getNumPkts();
+  };
+
+  inline void incIngress(time_t t, u_int64_t num_pkts, u_int64_t num_bytes,
+                         bool broadcast) {
+    rcvd.incStats(t, num_pkts, num_bytes);
+    ingress.incStats(t, num_pkts, num_bytes);
+    if (broadcast) ingress_broadcast.incStats(t, num_pkts, num_bytes);
+  };
+
+  inline void incEgress(time_t t, u_int64_t num_pkts, u_int64_t num_bytes,
+                        bool broadcast) {
+    sent.incStats(t, num_pkts, num_bytes);
+    egress.incStats(t, num_pkts, num_bytes);
+    if (broadcast) egress_broadcast.incStats(t, num_pkts, num_bytes);
+  };
+
+  inline void incInner(time_t t, u_int64_t num_pkts, u_int64_t num_bytes,
+                       bool broadcast) {
+    sent.incStats(t, num_pkts, num_bytes);
+    inner.incStats(t, num_pkts, num_bytes);
+    if (broadcast) inner_broadcast.incStats(t, num_pkts, num_bytes);
+  };
+
+  inline void incIngressTcp(u_int32_t ooo_pkts, u_int32_t retr_pkts,
+                            u_int32_t lost_pkts, u_int32_t keep_alive_pkts) {
+    incTcp(&tcp_packet_stats_ingress, ooo_pkts, retr_pkts, lost_pkts,
+           keep_alive_pkts);
+  };
+
+  inline void incEgressTcp(u_int32_t ooo_pkts, u_int32_t retr_pkts,
+                           u_int32_t lost_pkts, u_int32_t keep_alive_pkts) {
+    incTcp(&tcp_packet_stats_egress, ooo_pkts, retr_pkts, lost_pkts,
+           keep_alive_pkts);
+  };
+
+  inline void incInnerTcp(u_int32_t ooo_pkts, u_int32_t retr_pkts,
+                          u_int32_t lost_pkts, u_int32_t keep_alive_pkts) {
+    incTcp(&tcp_packet_stats_inner, ooo_pkts, retr_pkts, lost_pkts,
+           keep_alive_pkts);
+  };
+
+#ifdef NTOPNG_PRO
+  void incTrafficBetweenNets(u_int32_t net_id, u_int32_t bytes_sent,
+                             u_int32_t bytes_rcvd);
+  void resetTrafficBetweenNets();
+#endif
+
+  inline void incNumHosts() { numHosts++; };
+  inline void incNumAlertedFlows(bool as_client) {
+    if (as_client)
+      alerted_flows_as_client++;
+    else
+      alerted_flows_as_server++;
+  };
+  inline void decNumHosts() { numHosts--; };
+  inline u_int32_t getNumHosts() const { return numHosts; };
+  inline u_int32_t getTotalAlertedNumFlowsAsClient() const {
+    return (alerted_flows_as_client);
+  };
+  inline u_int32_t getTotalAlertedNumFlowsAsServer() const {
+    return (alerted_flows_as_server);
+  };
+
+  void setNetworkId(u_int8_t id);
+  bool match(AddressTree* tree);
+  void lua(lua_State* vm, bool diff = false, bool fullStats = true);
+  void housekeepAlerts(ScriptPeriodicity p);
+
+  virtual void updateStats(const struct timeval* tv);
+
+  void updateSynAlertsCounter(time_t when, bool syn_sent);
+  void updateSynAckAlertsCounter(time_t when, bool synack_sent);
+  void updateRoundTripTime(u_int32_t rtt_msecs);
+  void incNumFlows(time_t t, bool as_client);
+#ifdef NTOPNG_PRO
+  void incQoEStats(QoEType qoe_type) { qoe_stats.incQoEStats(qoe_type); };
+#endif
+};
+
+#endif /* _NETWORK_STATS_H_ */

@@ -1,0 +1,188 @@
+AC_INIT([Makefile.in], 1.0)
+
+AC_ARG_WITH(nedge,          [  --with-nedge            Enable nEdge device build])
+
+CUSTOM_NTOPNG_DOT_CONF=""
+IS_EXA8=0
+if test -f "/etc/hostname"; then
+    IS_EXA8=`grep EXA8 /etc/hostname |wc -l`
+    if test $IS_EXA8 = "1"; then
+     CUSTOM_NTOPNG_DOT_CONF='cp ../ntopng.conf.exa8 ./debian/ntopng/etc/ntopng/ntopng.conf'
+    fi
+fi
+
+MACHINE=`uname -m`
+SHORT_MACHINE=`uname -m | cut -b1-3`
+
+EXTN=""
+
+if test $MACHINE = "x86_64"; then
+  EXTN="amd64"
+else
+  if test $SHORT_MACHINE = "aar"; then
+    EXTN="arm64"
+    EXTRA_DEPS=""
+    LIBRRD="librrd4, "
+  else
+    if test $SHORT_MACHINE = "arm"; then
+      EXTN="armhf"
+      EXTRA_DEPS=""
+      LIBRRD="librrd8, "
+    else
+      if test $SHORT_MACHINE = "mip"; then
+        EXTN="mips"
+        EXTRA_DEPS=""
+        LIBRRD=""
+      else	
+        EXTN="i386"
+      fi
+    fi
+  fi
+fi
+
+if [ test -d ../../pro/ ] && [ ! test -f ../../pro/utils/snzip ]; then
+  cd ../../pro/utils/; make snzip
+  if [ ! test -f ../../pro/utils/snzip ]; then
+    echo "snzip is missing: please compile it and try again"
+    exit
+  fi
+fi
+
+if [ test -f /usr/bin/lsb_release ]; then
+  UBUNTU_RELEASE=`lsb_release -r|cut -f 2`
+  UBUNTU_SUB_RELEASE=`echo $UBUNTU_RELEASE|cut -f 1 -d '.'`
+
+  if test "$UBUNTU_SUB_RELEASE" = "8"; then
+    UBUNTU_RELEASE="debian"
+  elif test "$UBUNTU_SUB_RELEASE" = "9"; then
+    UBUNTU_RELEASE="debian9"
+  else
+    # Debian buster
+    if test "$UBUNTU_SUB_RELEASE" = "10"; then
+      UBUNTU_RELEASE="debian10"
+    fi
+  fi
+
+  ZMQ_DEP="libzmq5"
+  EXTRA_DEPS=", debconf, libnuma1, $ZMQ_DEP, libnetfilter-queue1"
+
+  if [ test $MACHINE = "x86_64" ] && [ test -d $HOME/PF_RING ]; then
+    PFRING_VERSION=`$HOME/PF_RING/package/version.sh --version`
+    if test "x$PFRING_VERSION" = "x"; then
+      PFRING_DEP="pfring"
+    else
+      PFRING_DEP="pfring (=$PFRING_VERSION)"
+    fi
+  else
+    PFRING_DEP=""
+  fi
+
+  if test $IS_EXA8 = "1"; then
+    PFRING_DEP=""
+  fi
+  
+  EXTRA_DEPS="$EXTRA_DEPS"
+  SUDO=""
+else
+  # Looks like an embedded system
+  EXTRA_DEPS=""
+  PFRING_DEP=""
+  UBUNTU_RELEASE="debian"
+  SUDO="sudo"
+fi
+
+if test "$UBUNTU_RELEASE" = "22.04" || test "$UBUNTU_RELEASE" = "24.04" || test "$UBUNTU_RELEASE" = "26.04"; then
+  LIBRRD="librrd8, "
+else
+  LIBRRD="librrd4, "
+fi
+
+if test "${with_nedge+set}" = set; then
+ APP=nedge
+else
+ APP=ntopng
+fi
+
+CHOWN="$SUDO chown $USER:$GROUP ../$APP_*deb"
+
+CONTROL_EXT="$UBUNTU_RELEASE"
+if test $SHORT_MACHINE = "mip"; then
+  CONTROL_EXT="mips"
+else
+  if test $SHORT_MACHINE = "arm"; then
+     CONTROL_EXT=`lsb_release -c|cut -f 2`_pi
+  fi
+fi
+
+/bin/rm -f debian.ntopng/control.in
+
+if test "${with_nedge+set}" = set; then
+ cd debian.ntopng; ln -s control.nedge.$CONTROL_EXT.in control.in; cd ..
+ DEFAULT_TARGET=nedge
+else
+ cd debian.ntopng; ln -s control.$CONTROL_EXT.in control.in; cd ..
+ DEFAULT_TARGET=ntopng
+fi
+
+NTOPNG_VERS=`cat ../../configure.ac | head -2 | grep 'C_INIT' | cut -d " " -f 2 | cut -d ')' -f 1 | cut -d ',' -f 2 | tail -c +2 | sed 's/.\{1\}$//'`
+GIT_RELEASE=`git rev-parse HEAD`
+GIT_COMMITS=`git rev-list --all |wc -l | tr -d '[[:space:]]'`
+
+LICENSEDIR="`pwd`/../../../license"
+if test -d $LICENSEDIR; then
+  LICENSE_VERSION=`$LICENSEDIR/packages/version.sh --version`
+  if test $MACHINE = "x86_64"; then
+    # ntop-license not installed on raspberry
+    EXTRA_DEPS="$EXTRA_DEPS, ntop-license (=$LICENSE_VERSION)" 
+  fi
+fi
+
+NDPI_DEP="ndpi"
+if [ test -d $HOME/nDPI ]; then
+  NDPI_VERSION=`$HOME/nDPI/packages/version.sh --version`
+  if [ ! test "x$NDPI_VERSION" = "x" ]; then
+    NDPI_DEP="ndpi (=$NDPI_VERSION)"
+  fi
+fi
+
+EXTRA_DEPS="$EXTRA_DEPS, $NDPI_DEP, libsodium23"
+
+if test -f /usr/bin/debsigs; then
+  SIGN_CMD="debsigs"
+else
+  SIGN_CMD="dpkg-sig"
+fi
+
+DATE=`date -R`
+KERNEL=`uname -r`
+
+AC_SUBST(APP)
+AC_SUBST(DEFAULT_TARGET)
+AC_SUBST(NTOPNG_VERS)
+AC_SUBST(MACHINE)
+AC_SUBST(EXTN)
+AC_SUBST(DATE)
+AC_SUBST(KERNEL)
+AC_SUBST(EXTRA_DEPS)
+AC_SUBST(GIT_RELEASE)
+AC_SUBST(GIT_COMMITS)
+AC_SUBST(PFRING_DEP)
+AC_SUBST(LIBRRD)
+AC_SUBST(SUDO)
+AC_SUBST(CHOWN)
+AC_SUBST(CUSTOM_NTOPNG_DOT_CONF)
+AC_SUBST(SIGN_CMD)
+
+AC_CONFIG_FILES(Makefile)
+AC_CONFIG_FILES(debian.ntopng/changelog)
+AC_CONFIG_FILES(debian.ntopng/files)
+AC_CONFIG_FILES(debian.ntopng/control)
+AC_CONFIG_FILES(debian.ntopng/rules)
+AC_CONFIG_FILES(debian.ntopng/postinst)
+AC_CONFIG_FILES(debian.ntopng/prerm)
+AC_CONFIG_FILES(debian.ntopng/postrm)
+AC_CONFIG_FILES(debian.ntopng-data/changelog)
+AC_CONFIG_FILES(debian.ntopng-data/files)
+AC_CONFIG_FILES(debian.ntopng-data/control)
+
+AC_OUTPUT

@@ -1,0 +1,183 @@
+/*
+ *
+ * (C) 2013-26 - ntop.org
+ *
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *
+ */
+
+#include "ntop_includes.h"
+
+/* *************************************** */
+
+PacketStats::PacketStats() {
+  // if(trace_new_delete) ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s",
+  // __FILE__);
+  resetStats();
+}
+
+/* *************************************** */
+
+void PacketStats::resetStats() {
+  upTo64 = 0, upTo128 = 0, upTo256 = 0, upTo512 = 0, upTo1024 = 0, upTo1518 = 0,
+  upTo2500 = 0, upTo6500 = 0, upTo9000 = 0, above9000 = 0, syn = 0, synack = 0,
+  finack = 0, rst = 0;
+}
+
+/* *************************************** */
+
+void PacketStats::incStats(u_int num_pkts, u_int pkt_len) {
+  if (pkt_len <= 64)
+    upTo64 += num_pkts;
+  else if (pkt_len <= 128)
+    upTo128 += num_pkts;
+  else if (pkt_len <= 256)
+    upTo256 += num_pkts;
+  else if (pkt_len <= 512)
+    upTo512 += num_pkts;
+  else if (pkt_len <= 1024)
+    upTo1024 += num_pkts;
+  else if (pkt_len <= 1518)
+    upTo1518 += num_pkts;
+  else if (pkt_len <= 2500)
+    upTo2500 += num_pkts;
+  else if (pkt_len <= 6500)
+    upTo6500 += num_pkts;
+  else if (pkt_len <= 9000)
+    upTo9000 += num_pkts;
+  else
+    above9000 += num_pkts;
+};
+
+/* *************************************** */
+
+void PacketStats::incFlagStatsSingleSegment(u_int8_t flags) {
+  switch (flags) {
+    case TH_SYN:
+      syn++;
+      break;
+    case TH_SYN | TH_ACK:
+      synack++;
+      break;
+    case TH_FIN | TH_ACK:
+      finack++;
+      break;
+    default:
+      break;
+  }
+
+  if ((flags & TH_RST) == TH_RST) rst++;
+}
+
+/* *************************************** */
+
+void PacketStats::incFlagStatsCumulative(u_int8_t flags) {
+  if ((flags & TH_SYN) == TH_SYN) syn++;
+  if ((flags & (TH_SYN | TH_ACK)) == (TH_SYN | TH_ACK)) synack++;
+  if ((flags & (TH_FIN | TH_ACK)) == (TH_FIN | TH_ACK)) finack++;
+  if ((flags & TH_RST) == TH_RST) rst++;
+}
+
+/* *************************************** */
+
+void PacketStats::incFlagStats(u_int8_t flags, bool cumulative_flags) {
+  if (cumulative_flags)
+    incFlagStatsCumulative(flags);
+  else
+    incFlagStatsSingleSegment(flags);
+}
+
+/* *************************************** */
+
+json_object* PacketStats::getJSONObject() {
+  json_object* my_object;
+
+  my_object = json_object_new_object();
+
+  if (upTo64 > 0)
+    json_object_object_add(my_object, "upTo64", json_object_new_int64(upTo64));
+  if (upTo128 > 0)
+    json_object_object_add(my_object, "upTo128",
+                           json_object_new_int64(upTo128));
+  if (upTo256 > 0)
+    json_object_object_add(my_object, "upTo256",
+                           json_object_new_int64(upTo256));
+  if (upTo512 > 0)
+    json_object_object_add(my_object, "upTo512",
+                           json_object_new_int64(upTo512));
+  if (upTo1024 > 0)
+    json_object_object_add(my_object, "upTo1024",
+                           json_object_new_int64(upTo1024));
+  if (upTo1518 > 0)
+    json_object_object_add(my_object, "upTo1518",
+                           json_object_new_int64(upTo1518));
+  if (upTo2500 > 0)
+    json_object_object_add(my_object, "upTo2500",
+                           json_object_new_int64(upTo2500));
+  if (upTo6500 > 0)
+    json_object_object_add(my_object, "upTo6500",
+                           json_object_new_int64(upTo6500));
+  if (upTo9000 > 0)
+    json_object_object_add(my_object, "upTo9000",
+                           json_object_new_int64(upTo9000));
+  if (above9000 > 0)
+    json_object_object_add(my_object, "above9000",
+                           json_object_new_int64(above9000));
+  if (syn > 0)
+    json_object_object_add(my_object, "syn", json_object_new_int64(syn));
+  if (synack > 0)
+    json_object_object_add(my_object, "synack", json_object_new_int64(synack));
+  if (finack > 0)
+    json_object_object_add(my_object, "finack", json_object_new_int64(finack));
+  if (rst > 0)
+    json_object_object_add(my_object, "rst", json_object_new_int64(rst));
+
+  return (my_object);
+}
+
+/* ******************************************* */
+
+void PacketStats::lua(lua_State* vm, const char* label) {
+  lua_newtable(vm);
+
+  lua_newtable(vm);
+  lua_push_uint64_table_entry(vm, "upTo64", upTo64);
+  lua_push_uint64_table_entry(vm, "upTo128", upTo128);
+  lua_push_uint64_table_entry(vm, "upTo256", upTo256);
+  lua_push_uint64_table_entry(vm, "upTo512", upTo512);
+  lua_push_uint64_table_entry(vm, "upTo1024", upTo1024);
+  lua_push_uint64_table_entry(vm, "upTo1518", upTo1518);
+  lua_push_uint64_table_entry(vm, "upTo2500", upTo2500);
+  lua_push_uint64_table_entry(vm, "upTo6500", upTo6500);
+  lua_push_uint64_table_entry(vm, "upTo9000", upTo9000);
+  lua_push_uint64_table_entry(vm, "above9000", above9000);
+  lua_pushstring(vm, "size");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+
+  lua_newtable(vm);
+  lua_push_uint64_table_entry(vm, "syn", syn);
+  lua_push_uint64_table_entry(vm, "synack", synack);
+  lua_push_uint64_table_entry(vm, "finack", finack);
+  lua_push_uint64_table_entry(vm, "rst", rst);
+  lua_pushstring(vm, "tcp_flags");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+
+  lua_pushstring(vm, label);
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+}

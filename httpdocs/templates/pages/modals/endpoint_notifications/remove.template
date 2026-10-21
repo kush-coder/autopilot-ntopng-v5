@@ -1,0 +1,30 @@
+<div class="modal fade" id="remove-endpoint-modal" tabindex="-1" role="dialog" aria-labelledby="remove-endpoint-modal-title"
+    aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="remove-endpoint-modal-title">{{ i18n("endpoint_notifications.remove_endpoint") }}: <span class='remove-endpoint-name'></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form>
+                <div class="modal-body">
+                    <div class="alert alert-danger">
+                        {*
+                            i18n(
+                                'endpoint_notifications.remove_endpoint_message',
+                                {
+                                    endpoint = "<b><span class='remove-endpoint-name'></span></b>",
+                                    recipients_count = "<br><b><span class='recipients-count'></span></b>"
+                                }
+                            )
+                        *}
+                    </div>
+                    <span class="invalid-feedback"></span>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-danger">{{i18n("delete")}}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

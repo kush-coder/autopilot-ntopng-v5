@@ -1,0 +1,58 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/host/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/active_scan/?.lua;" .. package.path
+
+local rest_utils = require "rest_utils"
+local json = require("dkjson")
+local ascan_utils = require "ascan_utils"
+
+if not isAdministrator() then
+   rest_utils.answer(rest_utils.consts.err.not_granted)
+   return
+end
+
+if not ascan_utils.is_nmap_installed() then
+   rest_utils.answer(rest_utils.consts.err.not_enabled, {error = i18n("hosts_stats.page_scan_hosts.nmap_not_installed")})
+   return
+end
+
+local host = _GET["host"]
+local scan_type = _GET["scan_type"]
+local ports = _GET["scan_ports"]
+local single_host = toboolean(_GET["scan_single_host"]) or false
+local scan_id = _GET["scan_id"]
+local cidr = _GET["vs_cidr"]
+
+if single_host then 
+   if isEmptyString(host) or isEmptyString(scan_type) then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+   end
+
+   local is_single_scan = single_host
+   local is_all = not single_host
+   local is_periodic = not single_host
+
+   local res = ascan_utils.schedule_ondemand_single_host_scan(scan_type, host, ports, scan_id, is_periodic, is_all, is_single_scan, cidr)
+
+   if res then
+      rest_utils.answer(rest_utils.consts.success.ok)
+   else 
+      rest_utils.answer(rest_utils.consts.err.internal_error)
+
+   end
+else 
+   local res = ascan_utils.schedule_ondemand_all_hosts_scan()
+
+   if res then
+      rest_utils.answer(rest_utils.consts.success.ok)
+   else 
+      rest_utils.answer(rest_utils.consts.err.internal_error)
+
+   end
+end
+

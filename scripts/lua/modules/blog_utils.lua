@@ -1,0 +1,238 @@
+--
+-- (C) 2020-26 - ntop.org
+--
+require "lua_trace"
+require "ntop_utils"
+require "lua_utils_gui"
+local json = require("dkjson")
+
+local MAX_POSTS = 3
+local blog_utils = {}
+
+local BLOG_FEED_KEY = "ntopng.cache.blog_feed"
+local BLOG_NEXT_FEED_UPDATE = "ntopng.prefs.next_feed_update"
+local JSON_FEED = "https://feed.ntop.org/blog.json"
+
+-- Parse the date array, following this pattern: {yyyy, mm, dd, H, M, S, ...}
+-- Return 0 if the date is missing, otherwise it returns the right epoch
+function blog_utils.parseDate(date)
+
+    if (type(date) ~= "table") then
+        return 0
+    end
+
+    local year, month, day, hour, minutes = table.unpack(date)
+
+    local epoch = os.time({
+        year = year,
+        month = month,
+        day = day,
+        hour = hour,
+        min = minutes
+    })
+    return epoch
+end
+
+function blog_utils.intersectPosts(s1, s2)
+
+    -- if there aren't any old post then return the new ones
+    if (s1[1] == nil) then
+        return s2
+    end
+    -- do integrity check on old set
+    if (s1[1].epoch == nil) then
+        return s2
+    end
+    -- if there aren't any new post then return the old ones
+    if (s2[1] == nil) then
+        return s1
+    end
+
+    local intersected = {}
+    local j = 1
+
+    -- insert the new posts
+    for i = 1, MAX_POSTS do
+        if (s2[i].epoch > s1[1].epoch) then
+            intersected[i] = s2[i]
+            j = j + 1
+        end
+    end
+
+    -- insert the olds posts if the array is not full
+    local k = 1
+    for i = j, MAX_POSTS do
+        intersected[i] = s1[k]
+        k = k + 1
+    end
+
+    return (intersected)
+
+end
+
+function blog_utils.updatePostState(blogNotificationId, username)
+
+    if (blogNotificationId == nil) then
+        return false
+    end
+    if (isEmptyString(username)) then
+        return false
+    end
+
+    local postsJSON = ntop.getPref(BLOG_FEED_KEY)
+    local posts = {}
+
+    if (not isEmptyString(postsJSON)) then
+        posts = json.decode(postsJSON)
+    end
+
+    local success = false
+
+    for _, p in pairs(posts) do
+        if (p.id == blogNotificationId) then
+            if (p.users_read == nil) then
+                p.users_read = {}
+            end
+            p.users_read[username] = true
+            success = true
+        end
+    end
+
+    ntop.setPref(BLOG_FEED_KEY, json.encode(posts))
+
+    return (success)
+end
+
+function blog_utils.updateRedis(newPosts)
+
+    -- decode older posts from updateRedis
+    local oldPostsJSON = ntop.getPref(BLOG_FEED_KEY)
+    local oldPosts = {}
+    if (not isEmptyString(oldPostsJSON)) then
+        oldPosts = json.decode(oldPostsJSON)
+    end
+
+    -- intersect two notifications sets and marks the new
+    local intersected = blog_utils.intersectPosts(oldPosts, newPosts)
+
+    -- save the posts inside redis
+    ntop.setPref(BLOG_FEED_KEY, json.encode(intersected))
+
+end
+
+function blog_utils.fetchLatestPosts()
+
+    if ntop.isOffline() then
+        return
+    end
+
+    local response
+    local now = os.time()
+    local next_fetch = ntop.getPref(BLOG_NEXT_FEED_UPDATE)
+    local debug = false
+
+    if (debug) then
+        traceError(TRACE_NORMAL, TRACE_CONSOLE, "blog_utils.fetchLatestPosts()")
+    end
+
+    if ((next_fetch ~= nil) and (next_fetch ~= "")) then
+        next_fetch = tonumber(next_fetch)
+
+        if (next_fetch > now) then
+            return
+        end
+    end
+
+    traceError(TRACE_NORMAL, TRACE_CONSOLE, "Fetching latest ntop blog posts...")
+
+    local info = ntop.getInfo()
+    local url = JSON_FEED.."?id="..(info["pro.systemid"] or "")
+       .."&edition="..url_encode(info.edition)
+       .."&version="..url_encode(info.version)
+       .."&revision="..url_encode(info.revision)
+       .."&license_type="..url_encode(info["pro.license_type"] or "")
+
+    response = ntop.httpGet(url)
+
+    if ((response == nil) or (response["CONTENT"] == nil)) then
+        ntop.setPref(BLOG_NEXT_FEED_UPDATE, now + 300) -- Try again not less than 5 mins
+        return (false)
+    end
+
+    -- The feed is an RSS converted to JSON, with the posts in 'entries'
+    local feed = json.decode(response["CONTENT"])
+    local posts = feed and feed.entries
+
+    if ((posts == nil) or table.len(posts) == 0) then
+        ntop.setPref(BLOG_NEXT_FEED_UPDATE, now + 300) -- Try again not less than 5 mins
+        return (false)
+    end
+
+    ntop.setPref(BLOG_NEXT_FEED_UPDATE, now + 43200) -- Try again not less than 12 hours
+
+    local latest3Posts = {posts[1], posts[2], posts[3]}
+    local formattedPosts = {}
+
+    for i, post in ipairs(latest3Posts) do
+        if (post ~= nil) then
+
+            local postId = tonumber(string.match(post.id or "", "p=(%d+)"))
+            local postTitle = post.title or ""
+            local postURL = post.link
+            local excerpt = post.summary or ""
+            excerpt = excerpt:gsub("<[^>]+>", ""):gsub("%[&hellip;%]%s*$", "")
+            local postShortDesc = string.sub(excerpt, 1, 48) .. '...'
+            local postEpoch = blog_utils.parseDate(post.published_parsed)
+
+            local post = {
+                id = postId,
+                title = postTitle,
+                link = postURL,
+                shortDesc = postShortDesc,
+                epoch = postEpoch
+            }
+
+            formattedPosts[#formattedPosts + 1] = post
+        end
+    end
+
+    -- updates redis
+    blog_utils.updateRedis(formattedPosts)
+
+    return (true)
+end
+
+function blog_utils.readPostsFromRedis(username)
+    if (username == nil) then
+        return {}
+    end
+    if (isEmptyString(username)) then
+        return {}
+    end
+
+    local postsJSON = ntop.getPref(BLOG_FEED_KEY)
+    local posts = {}
+
+    if (not isEmptyString(postsJSON)) then
+        posts = json.decode(postsJSON)
+    end
+
+    local newPostCounter = 0
+
+    -- post.users_read is an array which contains
+    -- the users who read the notification
+    for _, post in pairs(posts) do
+        if (post.users_read == nil) then
+            post.users_read = {}
+            newPostCounter = newPostCounter + 1
+        else
+            if (not post.users_read[username]) then
+                newPostCounter = newPostCounter + 1
+            end
+        end
+    end
+
+    return posts, newPostCounter
+end
+
+return blog_utils

@@ -1,0 +1,76 @@
+/*
+ *
+ * (C) 2018-26 - ntop.org
+ *
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *
+ */
+
+#include "ntop_includes.h"
+
+/* ******************************************************* */
+
+RRDTimeseriesExporter::RRDTimeseriesExporter(NetworkInterface* _if)
+    : TimeseriesExporter(_if) {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+  ts_queue = new (std::nothrow) StringFifoQueue(MAX_RRD_QUEUE_LEN);
+}
+
+/* ******************************************************* */
+
+RRDTimeseriesExporter::~RRDTimeseriesExporter() { delete ts_queue; }
+
+/* ******************************************************* */
+
+bool RRDTimeseriesExporter::enqueueData(lua_State* vm, bool do_lock) {
+  char data[LINE_PROTOCOL_MAX_LINE];
+  bool rv = false;
+
+  if (line_protocol_write_line(vm, data, sizeof(data),
+                               NULL /* No need to escape here */) < 0)
+    return false;
+
+  rv = ts_queue->enqueue(data);
+  if(!rv) qdrops++;
+
+#ifdef DEBUG_QUEUE
+  if(rv == false)
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "RRD queue too long: %u [%.1f %%]",
+				 ts_queue->getLength(), ts_queue->fillPct());
+#endif
+  
+  return rv;
+}
+
+/* ******************************************************* */
+
+char* RRDTimeseriesExporter::dequeueData() {
+  if (ts_queue->empty())
+    return (NULL);
+  else
+    return (ts_queue->dequeue());
+}
+
+/* ******************************************************* */
+
+u_int64_t RRDTimeseriesExporter::queueLength() const {
+  return ts_queue->getLength();
+}
+
+/* ******************************************************* */
+
+void RRDTimeseriesExporter::flush() {}

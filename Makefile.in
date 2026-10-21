@@ -1,0 +1,367 @@
+@PRO_MAKEFILE_INC@
+PKG_CONFIG ?= pkg-config
+prefix = @prefix@
+datadir = @datadir@
+datarootdir = @datarootdir@
+SHELL=/bin/sh
+OS := $(shell uname -s)
+PWD=@PWD@
+
+
+INSTALL_DIR=$(DESTDIR)$(prefix)
+MAN_DIR=$(DESTDIR)@MAN_DIR@
+
+# FreeBSD does not include wget by default, but the base system
+# includes fetch, which provides similar functionality.
+ifeq ($(OS), $(filter $(OS), FreeBSD))
+	GET_UTIL = fetch
+else
+	GET_UTIL = wget --no-proxy -nc
+endif
+
+######
+NDPI_LIB = @NDPI_LIB@
+NDPI_INC = @NDPI_INC@
+NDPI_LIB_DEP = @NDPI_LIB_DEP@
+######
+LIBPCAP=@LIBPCAP@
+######
+MONGOOSE_HOME=${PWD}/third-party/mongoose
+MONGOOSE_INC=-I$(MONGOOSE_HOME)
+######
+
+LUA_PLATFORM=generic
+LUA_HOME=${PWD}/third-party/lua-5.4.6
+LUA_INC=-I$(LUA_HOME)/src
+LUA_LIB=$(LUA_HOME)/src/liblua.a
+
+HAVE_CLICKHOUSE=@HAVE_CLICKHOUSE@
+CLICKHOUSE_HOME=
+CLICKHOUSE_INC=
+CLICKHOUSE_LIB=
+CLICKHOUSE_DEP_LIBS=
+ifeq ($(HAVE_CLICKHOUSE),1)
+CLICKHOUSE_HOME=@CLICKHOUSE_HOME@
+CLICKHOUSE_INC=-I$(CLICKHOUSE_HOME) -I$(CLICKHOUSE_HOME)/contrib/absl
+CLICKHOUSE_LIB=$(CLICKHOUSE_HOME)/build/clickhouse/libclickhouse-cpp-lib.a
+CLICKHOUSE_DEP_LIBS=$(CLICKHOUSE_HOME)/build/clickhouse/cityhash/libcityhash.a $(CLICKHOUSE_HOME)/build/contrib/lz4/lz4/liblz4.a $(ZSTD_LIB)
+endif
+
+ifeq ($(OS),Linux)
+	LUA_PLATFORM=linux
+else ifeq ($(OS),Darwin)
+	LUA_PLATFORM=macosx
+else ifeq ($(OS), $(filter $(OS), FreeBSD))
+	LUA_PLATFORM=freebsd
+	LUA_LIB=/usr/local/lib/liblua-5.3.a
+endif
+
+######
+
+LIBRRDTOOL_INC = $(shell $(PKG_CONFIG) --cflags librrd)
+LIBRRDTOOL_LIB = @LIBRRD_LD_FLAGS@
+
+######
+
+HTTPCLIENT_INC=${PWD}/third-party/http-client-c/src/
+
+######
+
+JSON_INC=@JSON_CFLAGS@
+JSON_LIB=@JSON_LIBS@
+
+######
+
+SNMP_INC=
+SNMP_LIB=@SNMP_LIB@
+
+######
+
+HAS_ZSTD=$(shell $(PKG_CONFIG) --exists libzstd && echo 0)
+ifeq ($(HAS_ZSTD), 0)
+   ifeq ($(OS), $(filter $(OS), FreeBSD))
+	ZSTD_LIB = /usr/local/lib/libzstd.a
+     else
+	ZSTD_LIB = $(shell $(PKG_CONFIG) --libs libzstd)
+   endif
+endif
+
+######
+TARGET = ntopng
+LIBS = $(NDPI_LIB) $(LIBPCAP) $(LUA_LIB) $(CLICKHOUSE_LIB) $(CLICKHOUSE_DEP_LIBS) $(LIBRRDTOOL_LIB) $(ZEROMQ_LIB) $(JSON_LIB) $(SNMP_LIB) @MAXMINDDB_LIBS@ $(SODIUM_LIB) @NTOPCLOUD_LIB@ @HIREDIS_LIB@ @SQLITE_LIB@ @RADCLI_LIB@ @EXPAT_LIB@ @SSL_LIB@ @ZMQ_LIBS@ @LINK_OPTS@ @LDFLAGS@ @PRO_LIBS@ @LIBS@ $(ZSTD_LIB) @JE@  -lm -lpthread
+
+#
+# https://www.redhat.com/en/blog/hardening-elf-binaries-using-relocation-read-only-relro
+# Maximum protection. The entire GOT (Global Offset Table) is hardened and cannot be overwritten at runtime.
+# Only apply RELRO on Linux
+#
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+   LIBS +=  -Wl,-z,relro,-z,now -Wl,-z,noexecstack
+endif
+
+
+CC := @CC@ -fPIE -fPIC
+CXX := @CXX@ -fPIE -fPIC
+CPPFLAGS := @CPPFLAGS@
+CFLAGS := @CFLAGS@
+CXXFLAGS = $(CFLAGS) -std=c++17 @HIREDIS_INC@ @MAXMINDDB_CFLAGS@ $(MONGOOSE_INC) $(JSON_INC) $(SNMP_INC) $(SODIUM_INC) $(NDPI_INC) $(LUA_INC) $(CLICKHOUSE_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) @ZMQ_CFLAGS@ @CXXFLAGS@ -I$(HTTPCLIENT_INC) @SSL_INC@ @PRO_INCS@ -DDATA_DIR='"$(datadir)"' # -D_GLIBCPP_DEBUG
+######
+# ntopng-1.0_1234.x86_64.rpm
+PLATFORM = `uname -m`
+REVISION = @GIT_RELEASE@
+PACKAGE_VERSION = @PACKAGE_VERSION@
+NTOPNG_VERSION = @NTOPNG_VERSION@
+RPM_PKG = $(TARGET)-$(NTOPNG_VERSION)-@REVISION@.$(PLATFORM).rpm
+RPM_DATA_PKG = $(TARGET)-data-$(NTOPNG_VERSION)-@REVISION@.noarch.rpm
+######
+
+LIB_TARGETS = $(LUA_LIB)
+
+ifeq ($(HAVE_CLICKHOUSE),1)
+LIB_TARGETS += $(CLICKHOUSE_LIB)
+endif
+
+ifneq ($(HAS_ZEROMQ), 0)
+LIB_TARGETS += $(ZEROMQ_LIB)
+endif
+
+.PHONY: default all clean docs test
+
+default: hooks/.enabled $(NDPI_LIB_DEP) $(LIB_TARGETS) $(TARGET)
+
+all: default
+
+OBJECTS = $(patsubst src/%.cpp, src/%.o, $(wildcard src/*.cpp)) $(patsubst src/flow_checks/%.cpp, src/flow_checks/%.o, $(wildcard src/flow_checks/*.cpp)) $(patsubst src/flow_alerts/%.cpp, src/flow_alerts/%.o, $(wildcard src/flow_alerts/*.cpp)) $(patsubst src/host_checks/%.cpp, src/host_checks/%.o, $(wildcard src/host_checks/*.cpp)) $(patsubst src/host_alerts/%.cpp, src/host_alerts/%.o, $(wildcard src/host_alerts/*.cpp)) @PRO_OBJECTS@
+HEADERS = $(wildcard include/*.h) $(wildcard include/flow_checks/*.h) $(wildcard include/flow_alerts/*.h) $(wildcard include/host_checks/*.h) $(wildcard include/host_alerts/*.h) @PRO_HEADERS@
+INC     = $(wildcard src/*.inc)
+OBJECTS_NO_MAIN := $(filter-out src/main.o,$(OBJECTS))
+
+TEST_FILES = $(wildcard tests/src/*.cpp) 
+TEST_HEADERS = $(wildcard tests/include/*.h)
+
+%.o: %.c $(HEADERS) $(INC) Makefile
+	$(CC) $(CPPFLAGS) $(CFLAGS) @MFLAGS@ -c $< -o $@
+
+%.o: %.cpp $(HEADERS) $(INC) Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) @MFLAGS@ -c $< -o $@
+
+.PRECIOUS: $(TARGET) $(OBJECTS)
+
+$(TARGET): @PRO_DEP@ $(OBJECTS) $(LIB_TARGETS) Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS) -lm -Wall $(LIBS) -o $@
+
+ifneq ($(wildcard pro/utils/gen_build_keys.sh),)
+# Per-build embedded keys (see pro/utils/gen_build_keys.sh), generated if missing.
+# The signing key hash is written last, so it stands for all of them.
+PRO_BUILD_KEYS = pro/utils/build_keys/sign_key_hash.c.inc
+
+$(PRO_BUILD_KEYS):
+	CC="$(CC)" pro/utils/gen_build_keys.sh
+
+pro/src/LuaHandler.o pro/src/NtopPro.o: $(PRO_BUILD_KEYS) pro/utils/key_obfuscation.h
+endif
+
+unit_test: $(TEST_FILES) $(OBJECTS_NO_MAIN) ${TEST_HEADERS} $(LIB_TARGETS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(TEST_FILES) $(OBJECTS_NO_MAIN) -lm -lgtest $(LIBS) -o ./tests/unit_tests
+
+test_fifo_queue: $(OBJECTS_NO_MAIN) $(LIB_TARGETS)
+	rm src/FifoStringsQueue.o
+	$(MAKE) CPPFLAGS="${CPPFLAGS} -DTEST_FIFO_QUEUE -DDEBUG_FIFO_QUEUE" src/FifoStringsQueue.o
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS_NO_MAIN) -Wall $(LIBS) -o $@
+
+test_alert_engine: $(OBJECTS_NO_MAIN) $(LIB_TARGETS)
+	rm src/AlertCheckLuaEngine.o
+	$(MAKE) CPPFLAGS="${CPPFLAGS} -DTEST_CHECK_ENGINE" src/AlertCheckLuaEngine.o
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS_NO_MAIN) -Wall $(LIBS) -o $@
+
+$(LUA_LIB):
+	$(MAKE) -C $(LUA_HOME) $(LUA_PLATFORM)
+
+ifeq ($(HAVE_CLICKHOUSE),1)
+$(CLICKHOUSE_LIB):
+	cd $(CLICKHOUSE_HOME) && cmake -B build -DWITH_OPENSSL=ON .
+	cd $(CLICKHOUSE_HOME) && cmake --build build
+endif
+
+ifeq ($(HAVE_CLICKHOUSE),1)
+CLICKHOUSE_CLEAN = cd $(CLICKHOUSE_HOME) && cmake --build build --target clean -- --no-print-directory
+endif
+
+$(ZEROMQ_LIB):
+	cd $(ZEROMQ_HOME); ./configure --without-documentation --without-libsodium; $(MAKE)
+
+hooks/.enabled:
+	git config core.hooksPath hooks || true
+	touch hooks/.enabled
+
+clean:
+	-rm -f src/*.o src/*~ src/flow_checks/*.o  src/flow_checks/*~ src/flow_alerts/*.o  src/flow_alerts/*~ src/host_checks/*.o  src/host_checks/*~ src/host_alerts/*.o  src/host_alerts/*~ include/*~ *~ #config.h
+	-rm -f $(TARGET)
+	-rm -f fuzz/*.o fuzz/proto/ fuzz/stub/*.o
+	if [ -d pro ]; then cd pro && $(MAKE) clean; fi
+	$(CLICKHOUSE_CLEAN)
+
+cert:
+	openssl req -new -x509 -sha256 -extensions v3_ca -nodes -days 365 -out cert.pem -subj "/CN=ntopng.local" -addext "subjectAltName = DNS:ntopng.local"
+	cat privkey.pem cert.pem > httpdocs/ssl/ntopng-cert.pem
+	/bin/rm -f privkey.pem cert.pem
+
+circular_deps:
+	cd ./tools; python3.5 circular_deps.py
+
+veryclean: clean
+	-rm -rf nDPI
+
+trackers:
+	./tools/download_trackers.sh httpdocs/other/trackers.txt
+
+# Do NOT build package as root (http://wiki.centos.org/HowTos/SetupRpmBuildEnvironment)
+#	mkdir -p $(HOME)/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+#	echo '%_topdir %(echo $HOME)/rpmbuild' > ~/.rpmmacros
+
+build-rpm: build-rpm-ntopng build-rpm-ntopng-data
+
+
+protools:
+	cd pro; make
+
+build-rpm-ntopng: ntopng protools
+	rpmbuild -bb ./packages/ntopng.spec
+	@@RPM_SIGN_CMD@ $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PKG)
+	@echo ""
+	@echo "Package contents:"
+	@rpm -qpl $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PKG)
+	@echo "The package is now available in $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PKG)"
+
+build-rpm-ntopng-data:
+	rpmbuild -bb ./packages/ntopng-data.spec
+	@@RPM_SIGN_CMD@ $(HOME)/rpmbuild/RPMS/noarch/$(RPM_DATA_PKG)
+	@echo ""
+	@echo "Package contents:"
+	@rpm -qpl $(HOME)/rpmbuild/RPMS/noarch/$(RPM_DATA_PKG)
+	@echo "The package is now available in $(HOME)/rpmbuild/RPMS/noarch/$(RPM_DATA_PKG)"
+
+docs:
+	cd doc && doxygen doxygen.conf
+
+windows:
+	# Windows dist
+	rm -rf ntopng-@NTOPNG_VERSION@
+	mkdir ntopng-@NTOPNG_VERSION@
+	cd ntopng-@NTOPNG_VERSION@; git clone https://github.com/ntop/ntopng.git; cd ntopng; git clone https://github.com/ntop/nDPI.git; cd ..; find ntopng -name .git | xargs rm -rf ; mv ntopng ntopng-@NTOPNG_VERSION@; tar cvfz ../ntopng-@NTOPNG_VERSION@.tgz ntopng-@NTOPNG_VERSION@
+
+install: ntopng
+	@echo "While we provide you an install make target, we encourage you"
+	@echo "to create a package and install that"
+	@echo "rpm - do 'make build-rpm'"
+	@echo "deb - do 'cd packages/ubuntu;./configure;make"
+	mkdir -p $(INSTALL_DIR)/share/ntopng $(MAN_DIR)/man8 $(INSTALL_DIR)/bin
+	cp ntopng $(INSTALL_DIR)/bin
+	cp ./ntopng.8 $(MAN_DIR)/man8
+	cp -r ./httpdocs $(INSTALL_DIR)/share/ntopng
+	cp -LR ./scripts $(INSTALL_DIR)/share/ntopng # L dereference symlinks
+	find $(INSTALL_DIR)/share/ntopng -name "*~"   | xargs /bin/rm -f
+	find $(INSTALL_DIR)/share/ntopng -name ".git" | xargs /bin/rm -rf
+
+uninstall:
+	if test -f $(INSTALL_DIR)/bin/ntopng; then rm $(INSTALL_DIR)/bin/ntopng; fi;
+	if test -f $(MAN_DIR)/man8/ntopng.8; then rm $(MAN_DIR)/man8/ntopng.8; fi;
+	if test -d $(INSTALL_DIR)/share/ntopng; then rm -r $(INSTALL_DIR)/share/ntopng; fi;
+
+Makefile: configure Makefile.in
+	./configure
+
+# Disabled to avoid too many recompilations
+#configure: @GIT_INDEX@
+#	@echo ""
+#	@echo "Re-running autogen as the git release has changed"
+#	@echo ""
+#	./autogen.sh
+
+# Checks intentionally silenced (see doc/README.cppcheck or commit log):
+#  useInitializationList/duplInheritedMember/noCopyConstructor/noOperatorEq
+#    - style/opinion, not applicable to this codebase
+#  postfixOperator            - it++ on iterators, no measurable cost here
+#  memsetClassFloat           - memset(...,0,...) is a valid zero for IEEE-754
+#  virtualCallInConstructor/Destructor - deliberate (base behaviour wanted)
+#  uninitMemberVar            - mostly false positives on this codebase's very
+#    large, heavily #ifdef'd constructors (cppcheck loses track of assignments,
+#    e.g. the `new (std::nothrow) T()` idiom) or reflect a deliberate
+#    construct-then-load two-phase init pattern (e.g. Prefs)
+#  nullPointer in the Lua engine files - false positives from the
+#    `getLuaVMContext(a) (a ? ... : NULL)` macro; the lua_State* is never NULL
+#    inside a Lua C function (scoped so real null derefs elsewhere still show)
+CPPCHECK_SUPPRESS = --suppress=useInitializationList --suppress=duplInheritedMember \
+                    --suppress=noCopyConstructor --suppress=noOperatorEq \
+                    --suppress=postfixOperator --suppress=memsetClassFloat \
+                    --suppress=virtualCallInConstructor --suppress=virtualCallInDestructor \
+                    --suppress=uninitMemberVar \
+                    --suppress=nullPointer:src/LuaEngineInterface.cpp \
+                    --suppress=nullPointer:src/LuaEngineNetwork.cpp \
+                    --suppress=nullPointer:src/LuaEngineNtop.cpp \
+                    --suppress=nullPointer:src/SNMP.cpp
+
+cppcheck:
+	@mkdir -p .cppcheck-build
+	cppcheck --template='{file}:{line}:{severity}:{message}' --quiet --enable=warning,performance,portability $(CPPCHECK_SUPPRESS) -j $(shell nproc) --cppcheck-build-dir=.cppcheck-build -I include/ $(PRO_CPPCHECK_INCS) @HIREDIS_INC@ $(MONGOOSE_INC) $(JSON_INC) $(NDPI_INC) $(LUA_INC) $(CLICKHOUSE_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) src/*.cpp $(PRO_CPPCHECK_SRCS)
+
+test: test_version
+
+test_version:
+	./ntopng --version
+
+webtest:
+	echo "Assuming default HTTP port and default credentials"
+	cd /tmp
+	rm -rf localhost:3000
+	wget --auth-no-challenge -mk --user admin --password admin http://localhost:3000
+
+changelog:
+	git log --since={`curl -s https://github.com/ntop/ntopng/releases | grep datetime | head -n1 | egrep -o "[0-9]+\-[0-9]+\-[0-9]+"`} --name-only --pretty=format:" - %s" > Changelog.latest
+	if [ -d pro ]; then cd pro && git log --since={`curl -s https://github.com/ntop/ntopng/releases | grep datetime | head -n1 | egrep -o "[0-9]+\-[0-9]+\-[0-9]+"`} --name-only --pretty=format:" - %s" >> ../Changelog.latest; fi
+
+# Note: use ./create_dist.sh for building and committing the new dist
+# Frontend source (http_src/, assets/, package.json) lives in pro/, which is
+# only available to ntop developers; community-only checkouts ship the
+# prebuilt httpdocs/dist and cannot rebuild the frontend.
+dist:
+	if [ -d pro ]; then cd pro && npm install && npm run build; else echo "pro/ not found: frontend source is not available in community-only checkouts, httpdocs/dist is prebuilt"; fi
+
+pull-deps:
+	echo "Pulling dependencies.."
+	rm -rf httpdocs/dist tests/e2e
+	git submodule init httpdocs/dist tests/e2e
+	git submodule update httpdocs/dist tests/e2e
+	branch=`git rev-parse --abbrev-ref HEAD`; cd httpdocs/dist && git checkout $$branch && git pull
+	branch=`git rev-parse --abbrev-ref HEAD`; cd tests/e2e && git checkout $$branch && git pull
+
+pull-pro:
+	if test -d ./pro; then echo "Pulling ntopng/pro..."; cd pro; git pull --rebase; fi
+
+pull-ndpi-pro:
+	if test -d ../ndpi-pro; then echo "Pulling ndpi-pro..."; cd ../ndpi-pro; git pull --rebase; fi
+
+format:
+	find ./src ./include -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --style=file -i '{}' \;
+	if test -d ./pro; then find ./pro/src ./pro/include -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --style=file -i '{}' \; ; fi
+
+fast-format:
+	find ./src ./include -type f -mtime -2 \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --style=file -i '{}' \;
+	if test -d ./pro; then find ./pro/src ./pro/include -type f -mtime -2 \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --style=file -i '{}' \; ; fi
+
+check-format:
+	git diff --name-only --cached | grep -P '^(src|include)/.*\.(cpp|h)$$' | xargs -n1 clang-format -n --Werror --style=file
+
+pull: pull-deps pull-pro pull-ndpi-pro
+	echo "Updating ntopng..."
+	git pull --rebase
+
+update-submodules:
+	echo "Advancing submodule pointers to latest.."
+	git submodule update --remote httpdocs/dist tests/e2e
+	git add httpdocs/dist tests/e2e
+
+@MAKE_EXTRA@
+
+@FUZZ_MAKEFILE_INC@

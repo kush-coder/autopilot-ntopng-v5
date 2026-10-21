@@ -1,0 +1,604 @@
+--
+-- (C) 2017-26 - ntop.org
+--
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/pools/?.lua;" .. package.path
+
+require "lua_utils"
+local json = require "dkjson"
+local rest_utils = require "rest_utils"
+local pools = require "pools"
+local pools_lua_utils = require "pools_lua_utils"
+local host_pools = require "host_pools"
+local tracker = require("tracker")
+local auth = require "auth"
+
+-- ##############################################
+
+local pools_rest_utils = {}
+
+-- ##############################################
+
+-- Checks whether the current user can access `pool_id` of the `s` pool instance.
+-- Only host pools can be restricted on a per-user basis (see auth.allowed_host_pools).
+local function is_pool_accessible(s, pool_id)
+   if s.key ~= "host" then
+      return true
+   end
+
+   return auth.is_allowed_host_pool(pool_id)
+end
+
+-- ##############################################
+
+-- Checks whether the current user has restrictions on the pools of the `s` instance
+local function is_pool_restricted_user(s)
+   return s.key == "host" and auth.allowed_host_pools() ~= nil
+end
+
+-- ##############################################
+
+-- @brief Add a pool
+function pools_rest_utils.add_pool(pools)
+   local name = _POST["pool_name"]
+   local members = _POST["pool_members"]
+
+   if not auth.has_capability(auth.capabilities.pools) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   if not name or not members then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   -- Create an instance out of the `pools` passed as argument
+   local s = pools:create()
+
+   -- Users restricted to a subset of the pools cannot create new (unreachable) pools
+   if is_pool_restricted_user(s) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   -- Too many pools created for this ntopng version
+   if s:get_num_pools() >= s:get_max_num_pools() then
+      if ntop.isEnterpriseM and ntop.isEnterpriseM() then
+	 rest_utils.answer(rest_utils.consts.err.add_pool_failed_too_many_pools_enterprise)
+      else
+	 rest_utils.answer(rest_utils.consts.err.add_pool_failed_too_many_pools)
+      end
+      return
+   end
+
+   members_list = s:parse_members(members)
+
+   local new_pool_id = s:add_pool(
+      name,
+      members_list --[[ an array of valid interface ids]]
+   )
+
+   if not new_pool_id then
+      rest_utils.answer(rest_utils.consts.err.add_pool_failed)
+      return
+   end
+
+   local rc = rest_utils.consts.success.pool_added
+   local res = {
+      pool_id = new_pool_id
+   }
+
+   rest_utils.answer(rc, res)
+
+   -- TRACKER HOOK
+   tracker.log('add_pool', { pool_name = name, members = members, pool_key = s.key })
+end
+
+-- ##############################################
+
+-- @brief Edit a pool
+function pools_rest_utils.edit_pool(pools)
+   local pool_id = _POST["pool"]
+   local name = _POST["pool_name"]
+   local members = _POST["pool_members"]
+
+   if not auth.has_capability(auth.capabilities.pools) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   if not pool_id or not name or not members then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   -- Create the instance
+   local s = pools:create()
+
+   members_list = s:parse_members(members)
+   -- pool_id as number
+   pool_id = tonumber(pool_id)
+
+   -- Make sure the user is allowed to access this pool
+   if not is_pool_accessible(s, pool_id) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   local res = s:edit_pool(pool_id,
+      name,
+      members_list --[[ an array of valid interface ids]]
+   )
+
+   if not res then
+      rest_utils.answer(rest_utils.consts.err.edit_pool_failed)
+      return
+   end
+
+   local rc = rest_utils.consts.success.pool_edited
+   rest_utils.answer(rc)
+
+   -- TRACKER HOOK
+   tracker.log('edit_pool', { pool_id = pool_id, pool_name = name, members = members, pool_key = s.key })
+end
+
+-- ##############################################
+
+-- @brief Delete a pool
+function pools_rest_utils.delete_pool(pools)
+   local pool_id = _POST["pool"]
+
+   if not auth.has_capability(auth.capabilities.pools) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   if not pool_id then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   -- pool_id as number
+   pool_id = tonumber(pool_id)
+
+   -- Create the instance
+   local s = pools:create()
+
+   -- Make sure the user is allowed to access this pool
+   if not is_pool_accessible(s, pool_id) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   -- Fetch the existing pool
+   local existing_pool = s:get_pool(pool_id)
+   if not existing_pool then
+      rest_utils.answer(rest_utils.consts.err.pool_not_found)
+      return
+   end
+
+   -- Delete the pool
+   local res = s:delete_pool(pool_id)
+   if not res then
+      rest_utils.answer(rest_utils.consts.err.pool_not_found)
+      return
+   end
+
+   local rc = rest_utils.consts.success.pool_deleted
+   local res = {
+      pool_id = new_pool_id
+   }
+
+   rest_utils.answer(rc, res)
+
+   -- TRACKER HOOK
+   tracker.log('delete_pool', { pool_id = pool_id,  pool_name = existing_pool["name"], pool_key = s.key })
+end
+
+-- ##############################################
+
+-- @brief Add a member to a pool
+function pools_rest_utils.add_member()
+   local pools = require "host_pools"
+   local pool_id = _GET["pool"]
+   local member = fixPoolMemberFormat(_POST["member"])
+   
+   if not isAdministrator() then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   if not pool_id or not member then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   -- pool_id as number
+   pool_id = tonumber(pool_id)
+   
+   -- Create the instance
+   local s = pools:create()
+   local res, err
+
+   if pool_id == s.DEFAULT_POOL_ID then
+      -- Because default pool must always contain all hosts seen on the network
+      -- Always bind the member to the default pool id (possibly removing it from any other pool)
+      res, err = s:bind_member(member, pool_id)
+   else
+      -- Bind the member only if it is not already in another pool
+      res, err = s:bind_member_if_not_already_bound(member, pool_id)
+   end
+
+   if not res then
+      if err == pools.ERRORS.ALREADY_BOUND then
+         -- Member already existing, return current pool information in the response
+         local cur_pool = s:get_pool_by_member(member)
+         rest_utils.answer(rest_utils.consts.err.bind_pool_member_already_bound, cur_pool)
+      else
+         -- Generic
+         rest_utils.answer(rest_utils.consts.err.bind_pool_member_failed)
+      end
+      return
+   end
+
+   local rc = rest_utils.consts.success.pool_member_bound
+   rest_utils.answer(rc)
+
+   local dst_pool = s:get_pool(pool_id)
+
+   -- TRACKER HOOK
+   tracker.log('bind_pool_member', { pool_id = pool_id, pool_name = dst_pool["name"], member = member, pool_key = s.key })
+end
+
+-- @brief Edit a member (move from old pool to new pool)
+function pools_rest_utils.edit_member()
+   local pools = require "host_pools"
+   local old_pool_name = _GET["pool_name"]
+   local pool_id = _GET["pool"]
+   local member = fixPoolMemberFormat(_POST["member"])
+   local old_member = _POST["old_member"]
+   
+   if not isAdministrator() then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   if not pool_id or not member or not old_member then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   -- pool_id as number
+   pool_id = tonumber(pool_id)
+   
+   -- Create the instance
+   local s = pools:create()
+   local res, err
+
+   -- First, bind the old member to default pool (remove from current pool)
+   res, err = s:bind_member(old_member, s.DEFAULT_POOL_ID)
+   
+   if not res then
+      rest_utils.answer(rest_utils.consts.err.bind_pool_member_failed)
+      return
+   end
+
+   if pool_id == s.DEFAULT_POOL_ID then
+      -- Because default pool must always contain all hosts seen on the network
+      -- Always bind the member to the default pool id (possibly removing it from any other pool)
+      res, err = s:bind_member(member, pool_id)
+      if old_pool_name == host_pools.DROP_HOST_POOL_NAME and ntop.isPro and ntop.isPro() then
+         package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
+         local policy_utils = require "policy_utils"
+         policy_utils.broadcast_ips_rules()
+      end
+   else
+      -- Bind the member only if it is not already in another pool
+      res, err = s:bind_member_if_not_already_bound(member, pool_id)
+   end
+
+   if not res then
+      if err == pools.ERRORS.ALREADY_BOUND then
+         -- Member already existing, return current pool information in the response
+         local cur_pool = s:get_pool_by_member(member)
+         rest_utils.answer(rest_utils.consts.err.bind_pool_member_already_bound, cur_pool)
+      else
+         -- Generic
+         rest_utils.answer(rest_utils.consts.err.bind_pool_member_failed)
+      end
+      return
+   end
+
+   local rc = rest_utils.consts.success.pool_member_bound
+   rest_utils.answer(rc)
+
+   local dst_pool = s:get_pool(pool_id)
+
+   -- TRACKER HOOK
+   tracker.log('bind_pool_member', { pool_id = pool_id, pool_name = dst_pool["name"], member = member, pool_key = s.key })
+end
+
+-- @brief Delete a member (move to default pool)
+function pools_rest_utils.delete_member()
+   local pools = require "host_pools"
+   local old_pool_name = _GET["pool_name"]
+   local member = fixPoolMemberFormat(_POST["member"])
+   
+   if not isAdministrator() then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   if not member then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   -- Create the instance
+   local s = pools:create()
+   local res, err
+
+   -- Always bind the member to the default pool (removing it from any other pool)
+   res, err = s:bind_member(member, s.DEFAULT_POOL_ID)
+   
+   if old_pool_name == host_pools.DROP_HOST_POOL_NAME and ntop.isPro and ntop.isPro() then
+      package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
+      local policy_utils = require "policy_utils"
+      policy_utils.broadcast_ips_rules()
+   end
+
+   if not res then
+      rest_utils.answer(rest_utils.consts.err.bind_pool_member_failed)
+      return
+   end
+
+   local rc = rest_utils.consts.success.pool_member_bound
+   rest_utils.answer(rc)
+
+   local dst_pool = s:get_pool(s.DEFAULT_POOL_ID)
+
+   -- TRACKER HOOK
+   tracker.log('bind_pool_member', { pool_id = s.DEFAULT_POOL_ID, pool_name = dst_pool["name"], member = member, pool_key = s.key })
+end
+
+--
+-- @brief Bind a member to a pool
+function pools_rest_utils.bind_member(pools)
+   local old_pool_name = _GET["pool_name"] -- edit
+
+   local pool_id = _GET["pool"] -- sempre
+   local member = fixPoolMemberFormat(_POST["member"]) -- sempre (nome membro IP ETC)
+
+   local action = _POST["action"] -- se edit
+   local old_member = _POST["old_member"] -- se edit
+   
+   if not isAdministrator() then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   if not pool_id or not member then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   -- pool_id as number
+   pool_id = tonumber(pool_id)
+
+   -- Create the instance
+   local s = pools:create()
+   local res, err
+
+   if action == 'edit' then
+      res, err = s:bind_member(old_member, s.DEFAULT_POOL_ID)
+   end
+
+   if pool_id == s.DEFAULT_POOL_ID then
+      -- Because default pool must always contain all hosts seen on the network
+      -- Always bind the member to the default pool id (possibly removing it from any other pool)
+      res, err = s:bind_member(member, pool_id)
+      if old_pool_name == host_pools.DROP_HOST_POOL_NAME and ntop.isPro and ntop.isPro() then
+	 package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
+	 local policy_utils = require "policy_utils"
+
+	 policy_utils.broadcast_ips_rules()
+      end
+   else
+      -- Bind the member only if it is not already in another pool
+      res, err = s:bind_member_if_not_already_bound(member, pool_id)
+   end
+
+   if not res then
+      if err == pools.ERRORS.ALREADY_BOUND then
+	 -- Member already existing, return current pool information in the response
+	 local cur_pool = s:get_pool_by_member(member)
+	 rest_utils.answer(rest_utils.consts.err.bind_pool_member_already_bound, cur_pool)
+      else
+	 -- Generic
+	 rest_utils.answer(rest_utils.consts.err.bind_pool_member_failed)
+      end
+
+      return
+   end
+
+   local rc = rest_utils.consts.success.pool_member_bound
+   rest_utils.answer(rc)
+
+   local dst_pool = s:get_pool(pool_id)
+
+   -- TRACKER HOOK
+   tracker.log('bind_pool_member', { pool_id = pool_id, pool_name = dst_pool["name"], member = member, pool_key = s.key })
+end
+
+-- ##############################################
+
+-- @brief Get one or all pools
+function pools_rest_utils.get_pools(pools)
+   local pool_id = _GET["pool"]
+
+   -- pool_id as number
+   pool_id = tonumber(pool_id)
+
+   local res = {}
+
+   -- Create the instance
+   local s = pools:create()
+
+   -- Check if the current user has restrictions on allowed pools
+   local allowed_pools_set = is_pool_restricted_user(s) and auth.allowed_host_pools() or nil
+
+   if pool_id then
+      -- Check if pool is allowed
+      if allowed_pools_set and not allowed_pools_set[pool_id] then
+	 rest_utils.answer(rest_utils.consts.err.not_granted)
+	 return
+      end
+
+      local cur_pool = s:get_pool(pool_id)
+
+      if cur_pool then
+	 res[pool_id] = cur_pool
+      else
+	 rest_utils.answer(rest_utils.consts.err.pool_not_found)
+	 return
+      end
+   else
+      -- Return all (allowed) pool ids
+      local all_pools = s:get_all_pools()
+
+      if allowed_pools_set then
+	 for _, pool in ipairs(all_pools) do
+	    if allowed_pools_set[pool["pool_id"]] then
+	       res[#res + 1] = pool
+	    end
+	 end
+      else
+	 res = all_pools
+      end
+   end
+
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
+end
+
+-- ##############################################
+
+-- @brief Get all pools of all the available (currently implemented) pool instances
+function pools_rest_utils.get_all_instances_pools()
+   local res = {}
+   local all_instances = pools_lua_utils.all_pool_instances_factory()
+
+   for _, instance in pairs(all_instances) do
+      local instance_pools = instance:get_all_pools()
+
+      for _, instance_pool in pairs(instance_pools) do
+	 instance_pool["key"] = instance.key -- e.g., 'interface', 'host', etc.
+	 res[#res + 1] = instance_pool
+      end
+   end
+
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
+end
+
+-- ##############################################
+
+-- @brief Get all pools of all the available (currently implemented) pool instances
+function pools_rest_utils.delete_all_instances_pools()
+   if not auth.has_capability(auth.capabilities.pools) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   local all_instances = pools_lua_utils.all_pool_instances_factory()
+
+   for _, instance in pairs(all_instances) do
+      instance:cleanup()
+   end
+
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc)
+end
+
+-- ##############################################
+
+-- @brief Get one or all pools
+function pools_rest_utils.get_pool_members(pools)
+   local pool_id = _GET["pool"]
+
+   -- pool_id as number
+   pool_id = tonumber(pool_id)
+
+   local res = {}
+
+   -- Create the instance
+   local s = pools:create()
+
+   -- Make sure the user is allowed to access this pool
+   if not is_pool_accessible(s, pool_id) then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+
+   local cur_pool = s:get_pool(pool_id)
+
+   if not cur_pool then
+      rest_utils.answer(rest_utils.consts.err.pool_not_found)
+      return
+   end
+
+   for member, details in pairs(cur_pool["member_details"]) do
+      details["member"] = member
+      details["member_cidr"] = details["name"]
+      if details["type"] ~= "ip" then
+         details["member_cidr"] = member:match("([^@]+)")
+      end
+      res[#res + 1] = details
+   end
+
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
+end
+
+-- ##############################################
+
+-- @brief Get one or all pools
+function pools_rest_utils.get_pool_by_member(pools)
+   local member = fixPoolMemberFormat(_POST["member"])
+   local pool_name_only = toboolean(_POST["pool_name_only"])
+
+   if not member then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   local res = {}
+
+   -- Create the instance
+   local s = pools:create()
+   local cur_pool = s:get_pool_by_member(member)
+
+   -- Don't disclose pools the user is not allowed to access
+   if cur_pool and not is_pool_accessible(s, cur_pool.pool_id) then
+      cur_pool = nil
+   end
+
+   if cur_pool then
+      if pool_name_only then
+         res = {
+            pool_id = cur_pool.pool_id,
+            name = cur_pool.name,
+         }
+      else
+         res = cur_pool
+      end
+   end
+
+   local rc = rest_utils.consts.success.ok
+   rest_utils.answer(rc, res)
+end
+
+-- ##############################################
+
+return pools_rest_utils

@@ -1,0 +1,81 @@
+--
+-- (C) 2020 - ntop.org
+--
+
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/import_export/?.lua;" .. package.path
+package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
+require "lua_utils" 
+local import_export = require "import_export"
+local json = require "dkjson"
+local rest_utils = require "rest_utils"
+
+if (ntop.isPro and ntop.isPro()) or (ntop.isnEdge and ntop.isnEdge()) then 
+   local snmp_config = require "snmp_config"
+end
+
+-- ##############################################
+
+local snmp_import_export = {}
+
+-- ##############################################
+
+function snmp_import_export:create(args)
+    -- Instance of the base class
+    local _snmp_import_export = import_export:create()
+
+    -- Subclass using the base class instance
+    self.key = "snmp"
+    -- self is passed as argument so it will be set as base class metatable
+    -- and this will actually make it possible to override functions
+    local _snmp_import_export_instance = _snmp_import_export:create(self)
+
+    -- Compute
+
+    -- Return the instance
+    return _snmp_import_export_instance
+end
+
+-- ##############################################
+
+-- @brief Import configuration
+-- @param conf The configuration to be imported
+-- @return A table with a key "success" set to true is returned on success. A key "err" is set in case of failure, with one of the errors defined in rest_utils.consts.err.
+function snmp_import_export:import(conf)
+
+   err = snmp_config.restore(conf)
+
+   local res = {}
+   if err then
+      res.err = err
+   else
+      res.success = true
+   end
+
+   return res
+end
+
+-- ##############################################
+
+-- @brief Export configuration
+-- @return The current configuration
+function snmp_import_export:export(name)
+   local conf = {}
+   if name == "snmp_data" then
+      conf = snmp_config.export_data()
+   else
+      conf = snmp_config.export()
+   end
+   return conf
+end
+
+-- ##############################################
+
+-- @brief Reset configuration
+function snmp_import_export:reset()
+   snmp_config.remove_all_devices()
+end
+
+-- ##############################################
+
+return snmp_import_export

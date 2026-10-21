@@ -1,0 +1,189 @@
+/*
+ *
+ * (C) 2013-26 - ntop.org
+ *
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *
+ */
+
+#include "ntop_includes.h"
+
+/* *************************************** */
+
+DnsStats::DnsStats() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
+  memset(&sent_stats.breakdown, 0, sizeof(sent_stats.breakdown)),
+      memset(&rcvd_stats.breakdown, 0, sizeof(rcvd_stats.breakdown));
+  sent_stats.num_queries = 0, sent_stats.num_replies_ok = 0,
+  sent_stats.num_replies_error = 0, rcvd_stats.num_queries = 0,
+  rcvd_stats.num_replies_ok = 0, rcvd_stats.num_replies_error = 0;
+}
+
+/* *************************************** */
+
+void DnsStats::incStats(bool as_client, const FlowDNSStats* fts) {
+  struct dns_stats* qry = as_client ? &sent_stats : &rcvd_stats;
+  struct dns_stats* rsp = as_client ? &rcvd_stats : &sent_stats;
+  u_int16_t tot_qry = 0;
+
+  if (fts->num_a) qry->breakdown.num_a += fts->num_a, tot_qry += fts->num_a;
+  if (fts->num_ns) qry->breakdown.num_ns += fts->num_ns, tot_qry += fts->num_ns;
+  if (fts->num_cname)
+    qry->breakdown.num_cname += fts->num_cname, tot_qry += fts->num_cname;
+  if (fts->num_soa)
+    qry->breakdown.num_soa += fts->num_soa, tot_qry += fts->num_soa;
+  if (fts->num_ptr)
+    qry->breakdown.num_ptr += fts->num_ptr, tot_qry += fts->num_ptr;
+  if (fts->num_mx) qry->breakdown.num_mx += fts->num_mx, tot_qry += fts->num_mx;
+  if (fts->num_txt)
+    qry->breakdown.num_txt += fts->num_txt, tot_qry += fts->num_txt;
+  if (fts->num_aaaa)
+    qry->breakdown.num_aaaa += fts->num_aaaa, tot_qry += fts->num_aaaa;
+  if (fts->num_any)
+    qry->breakdown.num_any += fts->num_any, tot_qry += fts->num_any;
+  if (fts->num_other)
+    qry->breakdown.num_other += fts->num_other, tot_qry += fts->num_other;
+  if (tot_qry) qry->num_queries += tot_qry;
+
+  if (fts->num_replies_ok) rsp->num_replies_ok += fts->num_replies_ok;
+  if (fts->num_replies_error) rsp->num_replies_error += fts->num_replies_error;
+
+#if 0 
+  if(tot_qry > 0) {
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[DNS] queries=%u/%u [OK %u]",
+				 getSentNumQueries(),
+				 getRcvdNumQueries(),
+				 getSentNumRepliesOk()
+				 );
+    /* TODO: rapporto tra nuovi flussi creati e queries DNS fatte */  
+  }
+#endif
+}
+
+
+/* *************************************** */
+
+void DnsStats::luaStats(lua_State* vm, struct dns_stats* stats,
+                        const char* label, bool verbose) {
+  lua_newtable(vm);
+
+  lua_push_uint64_table_entry(vm, "num_queries", stats->num_queries);
+  lua_push_uint64_table_entry(vm, "num_replies_ok", stats->num_replies_ok);
+  lua_push_uint64_table_entry(vm, "num_replies_error",
+                              stats->num_replies_error);
+
+  if (verbose) {
+    lua_newtable(vm);
+    lua_push_uint64_table_entry(vm, "num_a", stats->breakdown.num_a);
+    lua_push_uint64_table_entry(vm, "num_ns", stats->breakdown.num_ns);
+    lua_push_uint64_table_entry(vm, "num_cname", stats->breakdown.num_cname);
+    lua_push_uint64_table_entry(vm, "num_soa", stats->breakdown.num_soa);
+    lua_push_uint64_table_entry(vm, "num_ptr", stats->breakdown.num_ptr);
+    lua_push_uint64_table_entry(vm, "num_mx", stats->breakdown.num_mx);
+    lua_push_uint64_table_entry(vm, "num_txt", stats->breakdown.num_txt);
+    lua_push_uint64_table_entry(vm, "num_aaaa", stats->breakdown.num_aaaa);
+    lua_push_uint64_table_entry(vm, "num_any", stats->breakdown.num_any);
+    lua_push_uint64_table_entry(vm, "num_other", stats->breakdown.num_other);
+    lua_pushstring(vm, "queries");
+    lua_insert(vm, -2);
+    lua_settable(vm, -3);
+  }
+
+  lua_pushstring(vm, label);
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+}
+
+/* *************************************** */
+
+void DnsStats::lua(lua_State* vm, bool verbose) {
+  lua_newtable(vm);
+
+  luaStats(vm, &sent_stats, "sent", verbose);
+  luaStats(vm, &rcvd_stats, "rcvd", verbose);
+
+  lua_pushstring(vm, "dns");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+}
+
+/* ******************************************* */
+
+json_object* DnsStats::getStatsJSONObject(struct dns_stats* stats) {
+  json_object* my_object = json_object_new_object();
+  json_object* my_stats = json_object_new_object();
+
+  if (stats->num_queries > 0)
+    json_object_object_add(my_object, "num_queries",
+                           json_object_new_int64(stats->num_queries));
+  if (stats->num_replies_ok > 0)
+    json_object_object_add(my_object, "num_replies_ok",
+                           json_object_new_int64(stats->num_replies_ok));
+  if (stats->num_replies_error > 0)
+    json_object_object_add(my_object, "num_replies_error",
+                           json_object_new_int64(stats->num_replies_error));
+
+  if (stats->breakdown.num_a > 0)
+    json_object_object_add(my_stats, "num_a",
+                           json_object_new_int64(stats->breakdown.num_a));
+  if (stats->breakdown.num_ns > 0)
+    json_object_object_add(my_stats, "num_ns",
+                           json_object_new_int64(stats->breakdown.num_ns));
+  if (stats->breakdown.num_cname > 0)
+    json_object_object_add(my_stats, "num_cname",
+                           json_object_new_int64(stats->breakdown.num_cname));
+  if (stats->breakdown.num_soa > 0)
+    json_object_object_add(my_stats, "num_soa",
+                           json_object_new_int64(stats->breakdown.num_soa));
+  if (stats->breakdown.num_ptr > 0)
+    json_object_object_add(my_stats, "num_ptr",
+                           json_object_new_int64(stats->breakdown.num_ptr));
+  if (stats->breakdown.num_mx > 0)
+    json_object_object_add(my_stats, "num_mx",
+                           json_object_new_int64(stats->breakdown.num_mx));
+  if (stats->breakdown.num_txt > 0)
+    json_object_object_add(my_stats, "num_txt",
+                           json_object_new_int64(stats->breakdown.num_txt));
+  if (stats->breakdown.num_aaaa > 0)
+    json_object_object_add(my_stats, "num_aaaa",
+                           json_object_new_int64(stats->breakdown.num_aaaa));
+  if (stats->breakdown.num_any > 0)
+    json_object_object_add(my_stats, "num_any",
+                           json_object_new_int64(stats->breakdown.num_any));
+  if (stats->breakdown.num_other > 0)
+    json_object_object_add(my_stats, "num_other",
+                           json_object_new_int64(stats->breakdown.num_other));
+  json_object_object_add(my_object, "stats", my_stats);
+
+  return (my_object);
+}
+
+/* ******************************************* */
+
+json_object* DnsStats::getJSONObject() {
+  json_object* my_object = json_object_new_object();
+
+  json_object_object_add(my_object, "sent", getStatsJSONObject(&sent_stats));
+  json_object_object_add(my_object, "rcvd", getStatsJSONObject(&rcvd_stats));
+
+  return (my_object);
+}
+
+/* ******************************************* */
+
+void DnsStats::updateStats(const struct timeval* const tv) { /* REMOVE */ }

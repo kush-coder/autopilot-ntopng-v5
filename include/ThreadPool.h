@@ -1,0 +1,59 @@
+/*
+ *
+ * (C) 2017-26 - ntop.org
+ *
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *
+ */
+
+#ifndef _THREAD_POOL_H_
+#define _THREAD_POOL_H_
+
+#include "ntop_includes.h"
+
+class ThreadPool {
+ private:
+  u_int16_t num_threads;
+  bool terminating;
+  pthread_cond_t condvar;
+  Mutex* m;
+#ifdef __linux__
+  cpu_set_t affinity_mask;
+#endif
+
+  std::vector<pthread_t> threadsState;
+  std::queue<QueuedThreadData*> threads;
+
+  QueuedThreadData* dequeueJob(bool waitIfEmpty);
+
+  /* Creates and starts a new pool thread */
+  bool spawn();
+  bool isQueueable(ThreadedActivityState cur_state);
+
+ public:
+  ThreadPool(char* comma_separated_affinity_mask = NULL);
+  virtual ~ThreadPool();
+
+  void shutdown();
+  inline bool isTerminating() { return terminating; };
+
+  void run();
+  bool queueJob(ThreadedActivity* ta, char* path, NetworkInterface* iface,
+                time_t scheduled_time, time_t deadline, PeriodicActivities* pa,
+                bool hourly_daily_activity);
+};
+
+#endif /* _THREAD_POOL_H_ */

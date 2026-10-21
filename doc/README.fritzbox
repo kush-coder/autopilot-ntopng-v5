@@ -1,0 +1,33 @@
+Analyzing Network Traffic with Fritz!Box
+========================================
+
+Capturing traffic via Router GUI
+-------------------------------
+
+Owner of Fritz!Box routers can capture traffic accessing the URL
+http://<ROUTER IP>/html/capture.html that is typically
+http://fritz.box/html/capture.html
+
+Inside the page you can dump traffic in pcap format for later analysis.
+
+
+Live monitoring of router traffic
+---------------------------------
+If instead you want to monitor traffic in realtime with ntopng you can
+do that easily using the script `ntopng/tools/fritzdump.sh`
+
+Example usage:
+```
+ntopng/tools/fritzdump.sh <username> <password>
+```
+
+*NOTE:* If you use password-only authentication pass "dslf-config" as username
+
+As you can see in the script, it will connect to the Fritz!Box via http://fritz.box,
+authenticate with the user and password you passed and capture the traffic on the
+WWAN interface and send ntopng via the stdout all the incoming traffic.
+Modify the script to adapt it in case you have different setups.
+
+Thanks to this solution you can use ntopng to monitor in realtime all the
+traffic that is flowing inside your Fritz!Box router
+
